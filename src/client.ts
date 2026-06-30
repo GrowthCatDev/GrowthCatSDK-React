@@ -252,7 +252,14 @@ export class GrowthCatClient {
   }) {
     if (options.user) this.feedbackService.identify(options.user);
     if (options.theme) {
-      this.feedbackService.theme = { ...this.feedbackService.theme, ...options.theme };
+      this.feedbackService.theme = {
+        ...this.feedbackService.theme,
+        ...options.theme,
+        dark: {
+          ...this.feedbackService.theme.dark,
+          ...options.theme.dark,
+        },
+      };
     }
     if (options.strings) {
       this.feedbackService.strings = { ...this.feedbackService.strings, ...options.strings };

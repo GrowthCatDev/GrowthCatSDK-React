@@ -562,6 +562,29 @@ GrowthCat.shared.configureFeedback({
   strings: { title: "Share your thoughts" },
 });
 
+// The built-in board follows the user's system color scheme by default.
+// You can also force a mode or customize separate dark colors.
+GrowthCat.shared.configureFeedback({
+  theme: {
+    mode: "system", // "light" | "dark" | "system"
+    accentColor: "#0A84FF",
+    buttonTextColor: "#FFFFFF",
+    overlayColor: "rgba(0,0,0,0.4)",
+    inputBackgroundColor: "#FFFFFF",
+    selectedControlBackgroundColor: "rgba(10,132,255,0.1)",
+    dark: {
+      backgroundColor: "#111113",
+      cardColor: "#1C1C1E",
+      primaryTextColor: "#F5F5F7",
+      secondaryTextColor: "#A1A1AA",
+      borderColor: "#2C2C2E",
+      overlayColor: "rgba(0,0,0,0.55)",
+      inputBackgroundColor: "#111113",
+      selectedControlBackgroundColor: "rgba(10,132,255,0.18)",
+    },
+  },
+});
+
 // Submit feedback programmatically.
 const result = await GrowthCat.shared.submitFeedback({
   type: "bug",

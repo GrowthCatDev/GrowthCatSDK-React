@@ -18,22 +18,56 @@ export interface FeedbackUser {
 
 // ─── Theme ────────────────────────────────────────────────────────────────────
 
-export interface GrowthCatFeedbackTheme {
+export type GrowthCatFeedbackThemeMode = "light" | "dark" | "system";
+
+export interface GrowthCatFeedbackThemeColors {
   accentColor: string;
   backgroundColor: string;
   cardColor: string;
   primaryTextColor: string;
   secondaryTextColor: string;
   borderColor: string;
+  overlayColor?: string;
+  inputBackgroundColor?: string;
+  buttonTextColor?: string;
+  selectedControlBackgroundColor?: string;
 }
 
-export const DEFAULT_FEEDBACK_THEME: GrowthCatFeedbackTheme = {
+export interface GrowthCatFeedbackTheme extends GrowthCatFeedbackThemeColors {
+  mode?: GrowthCatFeedbackThemeMode;
+  dark?: Partial<GrowthCatFeedbackThemeColors>;
+}
+
+export const DEFAULT_FEEDBACK_LIGHT_THEME: GrowthCatFeedbackThemeColors = {
   accentColor: "#0A84FF",
   backgroundColor: "#F2F2F7",
   cardColor: "#FFFFFF",
   primaryTextColor: "#111111",
   secondaryTextColor: "#6B6B70",
   borderColor: "#DDDDDD",
+  overlayColor: "rgba(0,0,0,0.4)",
+  inputBackgroundColor: "#FFFFFF",
+  buttonTextColor: "#FFFFFF",
+  selectedControlBackgroundColor: "rgba(10,132,255,0.1)",
+};
+
+export const DEFAULT_FEEDBACK_DARK_THEME: GrowthCatFeedbackThemeColors = {
+  accentColor: "#0A84FF",
+  backgroundColor: "#111113",
+  cardColor: "#1C1C1E",
+  primaryTextColor: "#F5F5F7",
+  secondaryTextColor: "#A1A1AA",
+  borderColor: "#2C2C2E",
+  overlayColor: "rgba(0,0,0,0.55)",
+  inputBackgroundColor: "#111113",
+  buttonTextColor: "#FFFFFF",
+  selectedControlBackgroundColor: "rgba(10,132,255,0.18)",
+};
+
+export const DEFAULT_FEEDBACK_THEME: GrowthCatFeedbackTheme = {
+  ...DEFAULT_FEEDBACK_LIGHT_THEME,
+  mode: "system",
+  dark: DEFAULT_FEEDBACK_DARK_THEME,
 };
 
 // ─── Strings ──────────────────────────────────────────────────────────────────

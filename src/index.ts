@@ -57,6 +57,8 @@ export type {
   FeedbackSubmitResult,
   FeedbackVoteResult,
   FeedbackBoardItem,
+  GrowthCatFeedbackThemeMode,
+  GrowthCatFeedbackThemeColors,
   GrowthCatFeedbackTheme,
   GrowthCatFeedbackStrings,
 } from "./models/feedback";

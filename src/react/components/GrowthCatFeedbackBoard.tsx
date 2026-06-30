@@ -1,6 +1,14 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useFeedbackBoard, useFeedbackSubmit } from "../hooks/useFeedback";
-import { FeedbackBoardItem, FeedbackType, GrowthCatFeedbackStrings } from "../../models/feedback";
+import {
+  DEFAULT_FEEDBACK_DARK_THEME,
+  DEFAULT_FEEDBACK_LIGHT_THEME,
+  FeedbackBoardItem,
+  FeedbackType,
+  GrowthCatFeedbackStrings,
+  GrowthCatFeedbackTheme,
+  GrowthCatFeedbackThemeColors,
+} from "../../models/feedback";
 import { GrowthCat } from "../../growthcat";
 
 export interface GrowthCatFeedbackBoardProps {
@@ -29,18 +37,25 @@ export function GrowthCatFeedbackBoard({
 
   const [activeType, setActiveType] = useState<FeedbackType | undefined>(defaultType);
   const [showCompose, setShowCompose] = useState(false);
+  const prefersDark = usePrefersDarkMode();
+  const isCompact = useMediaQuery("(max-width: 640px)");
 
   const { items, isLoading, error, reload, vote, unvote } = useFeedbackBoard({
     type: activeType,
     autoLoad: true,
   });
 
-  const accent = theme?.accentColor ?? "#3B82F6";
-  const bg = theme?.backgroundColor ?? "#F9FAFB";
-  const card = theme?.cardColor ?? "#FFFFFF";
-  const primaryText = theme?.primaryTextColor ?? "#111827";
-  const secondaryText = theme?.secondaryTextColor ?? "#6B7280";
-  const border = theme?.borderColor ?? "#E5E7EB";
+  const resolvedTheme = resolveFeedbackTheme(theme, prefersDark);
+  const accent = resolvedTheme.accentColor;
+  const bg = resolvedTheme.backgroundColor;
+  const card = resolvedTheme.cardColor;
+  const primaryText = resolvedTheme.primaryTextColor;
+  const secondaryText = resolvedTheme.secondaryTextColor;
+  const border = resolvedTheme.borderColor;
+  const overlay = resolvedTheme.overlayColor ?? "rgba(0,0,0,0.4)";
+  const inputBackground = resolvedTheme.inputBackgroundColor ?? card;
+  const buttonText = resolvedTheme.buttonTextColor ?? "#fff";
+  const selectedControlBackground = resolvedTheme.selectedControlBackgroundColor ?? "rgba(10,132,255,0.1)";
 
   return (
     <div
@@ -102,6 +117,9 @@ export function GrowthCatFeedbackBoard({
           active={activeType === undefined}
           onClick={() => setActiveType(undefined)}
           accentColor={accent}
+          borderColor={border}
+          inactiveTextColor={secondaryText}
+          activeTextColor={buttonText}
         />
         {TYPES.map((t) => (
           <FilterChip
@@ -110,6 +128,9 @@ export function GrowthCatFeedbackBoard({
             active={activeType === t}
             onClick={() => setActiveType(activeType === t ? undefined : t)}
             accentColor={accent}
+            borderColor={border}
+            inactiveTextColor={secondaryText}
+            activeTextColor={buttonText}
           />
         ))}
       </div>
@@ -159,6 +180,7 @@ export function GrowthCatFeedbackBoard({
               secondaryText={secondaryText}
               border={border}
               accentColor={accent}
+              selectedControlBackgroundColor={selectedControlBackground}
               onVote={() => void (item.hasVoted ? unvote(item.itemId) : vote(item.itemId))}
             />
           ))}
@@ -170,9 +192,15 @@ export function GrowthCatFeedbackBoard({
         <ComposeSheet
           defaultType={activeType}
           accentColor={accent}
+          cardColor={card}
+          overlayColor={overlay}
+          inputBackgroundColor={inputBackground}
+          buttonTextColor={buttonText}
+          selectedControlBackgroundColor={selectedControlBackground}
           border={border}
           primaryText={primaryText}
           secondaryText={secondaryText}
+          isCompact={isCompact}
           strings={strings}
           onClose={() => setShowCompose(false)}
           onSubmitted={() => { setShowCompose(false); reload(); }}
@@ -189,11 +217,17 @@ function FilterChip({
   active,
   onClick,
   accentColor,
+  borderColor,
+  inactiveTextColor,
+  activeTextColor,
 }: {
   label: string;
   active: boolean;
   onClick: () => void;
   accentColor: string;
+  borderColor: string;
+  inactiveTextColor: string;
+  activeTextColor: string;
 }) {
   return (
     <button
@@ -202,10 +236,10 @@ function FilterChip({
         padding: "6px 14px",
         fontSize: 13,
         fontWeight: active ? 600 : 400,
-        border: `1px solid ${active ? accentColor : "#D1D5DB"}`,
+        border: `1px solid ${active ? accentColor : borderColor}`,
         borderRadius: 20,
         backgroundColor: active ? accentColor : "transparent",
-        color: active ? "#fff" : "#374151",
+        color: active ? activeTextColor : inactiveTextColor,
         cursor: "pointer",
         whiteSpace: "nowrap",
         flexShrink: 0,
@@ -223,6 +257,7 @@ function BoardItemRow({
   secondaryText,
   border,
   accentColor,
+  selectedControlBackgroundColor,
   onVote,
 }: {
   item: FeedbackBoardItem;
@@ -231,6 +266,7 @@ function BoardItemRow({
   secondaryText: string;
   border: string;
   accentColor: string;
+  selectedControlBackgroundColor: string;
   onVote: () => void;
 }) {
   return (
@@ -258,7 +294,7 @@ function BoardItemRow({
           border: `1px solid ${item.hasVoted ? accentColor : border}`,
           borderRadius: 8,
           padding: "6px 10px",
-          backgroundColor: item.hasVoted ? `${accentColor}18` : "transparent",
+          backgroundColor: item.hasVoted ? selectedControlBackgroundColor : "transparent",
           cursor: "pointer",
           flexShrink: 0,
           color: item.hasVoted ? accentColor : secondaryText,
@@ -324,18 +360,30 @@ function TypeBadge({ type }: { type: FeedbackType }) {
 function ComposeSheet({
   defaultType,
   accentColor,
+  cardColor,
+  overlayColor,
+  inputBackgroundColor,
+  buttonTextColor,
+  selectedControlBackgroundColor,
   border,
   primaryText,
   secondaryText,
+  isCompact,
   strings,
   onClose,
   onSubmitted,
 }: {
   defaultType?: FeedbackType;
   accentColor: string;
+  cardColor: string;
+  overlayColor: string;
+  inputBackgroundColor: string;
+  buttonTextColor: string;
+  selectedControlBackgroundColor: string;
   border: string;
   primaryText: string;
   secondaryText: string;
+  isCompact: boolean;
   strings: GrowthCatFeedbackStrings | undefined;
   onClose: () => void;
   onSubmitted: () => void;
@@ -358,22 +406,27 @@ function ComposeSheet({
         position: "fixed",
         inset: 0,
         zIndex: 1000,
-        backgroundColor: "rgba(0,0,0,0.4)",
+        backgroundColor: overlayColor,
         display: "flex",
-        alignItems: "flex-end",
+        alignItems: isCompact ? "flex-end" : "center",
         justifyContent: "center",
+        padding: isCompact ? "16px 0 0" : 24,
+        boxSizing: "border-box",
       }}
       onClick={onClose}
     >
       <div
         onClick={(e) => e.stopPropagation()}
         style={{
-          backgroundColor: "#fff",
-          borderRadius: "20px 20px 0 0",
+          backgroundColor: cardColor,
+          borderRadius: isCompact ? "20px 20px 0 0" : 20,
           width: "100%",
           maxWidth: 640,
+          maxHeight: isCompact ? "calc(100dvh - 24px)" : "min(760px, calc(100dvh - 48px))",
+          overflowY: "auto",
           padding: 24,
           boxSizing: "border-box",
+          boxShadow: isCompact ? "none" : "0 24px 80px rgba(0,0,0,0.22)",
         }}
       >
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
@@ -411,7 +464,7 @@ function ComposeSheet({
                     fontWeight: type === t ? 700 : 400,
                     border: `1px solid ${type === t ? accentColor : border}`,
                     borderRadius: 8,
-                    backgroundColor: type === t ? `${accentColor}18` : "transparent",
+                    backgroundColor: type === t ? selectedControlBackgroundColor : "transparent",
                     color: type === t ? accentColor : primaryText,
                     cursor: "pointer",
                   }}
@@ -438,6 +491,7 @@ function ComposeSheet({
                 borderRadius: 8,
                 marginBottom: 16,
                 boxSizing: "border-box",
+                backgroundColor: inputBackgroundColor,
                 color: primaryText,
               }}
             />
@@ -460,6 +514,7 @@ function ComposeSheet({
                 marginBottom: 16,
                 boxSizing: "border-box",
                 resize: "vertical",
+                backgroundColor: inputBackgroundColor,
                 color: primaryText,
                 fontFamily: "inherit",
               }}
@@ -477,7 +532,7 @@ function ComposeSheet({
                 padding: "12px",
                 fontSize: 15,
                 fontWeight: 700,
-                color: "#fff",
+                color: buttonTextColor,
                 backgroundColor: accentColor,
                 border: "none",
                 borderRadius: 10,
@@ -492,4 +547,48 @@ function ComposeSheet({
       </div>
     </div>
   );
+}
+
+function usePrefersDarkMode(): boolean {
+  return useMediaQuery("(prefers-color-scheme: dark)");
+}
+
+function useMediaQuery(query: string): boolean {
+  const [matches, setMatches] = useState(() => {
+    if (typeof window === "undefined" || !window.matchMedia) return false;
+    return window.matchMedia(query).matches;
+  });
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.matchMedia) return;
+    const mediaQuery = window.matchMedia(query);
+    const handleChange = () => setMatches(mediaQuery.matches);
+
+    handleChange();
+    mediaQuery.addEventListener?.("change", handleChange);
+    return () => mediaQuery.removeEventListener?.("change", handleChange);
+  }, [query]);
+
+  return matches;
+}
+
+function resolveFeedbackTheme(
+  theme: GrowthCatFeedbackTheme | undefined,
+  prefersDark: boolean,
+): GrowthCatFeedbackThemeColors {
+  const mode = theme?.mode ?? "system";
+  const useDark = mode === "dark" || (mode === "system" && prefersDark);
+
+  if (useDark) {
+    return {
+      ...DEFAULT_FEEDBACK_DARK_THEME,
+      ...theme?.dark,
+      accentColor: theme?.dark?.accentColor ?? theme?.accentColor ?? DEFAULT_FEEDBACK_DARK_THEME.accentColor,
+    };
+  }
+
+  return {
+    ...DEFAULT_FEEDBACK_LIGHT_THEME,
+    ...theme,
+  };
 }
