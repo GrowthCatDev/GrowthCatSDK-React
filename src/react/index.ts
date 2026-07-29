@@ -5,6 +5,9 @@ export type { UseAdOptions, UseAdResult, AdLoadState } from "./hooks/useAd";
 export { useReferral } from "./hooks/useReferral";
 export type { UseReferralOptions, UseReferralResult } from "./hooks/useReferral";
 
+export { useSponsor } from "./hooks/useSponsor";
+export type { UseSponsorOptions, UseSponsorResult, SponsorLoadState } from "./hooks/useSponsor";
+
 export { useFeedbackBoard, useFeedbackSubmit } from "./hooks/useFeedback";
 export type {
   UseFeedbackBoardOptions,
@@ -18,6 +21,9 @@ export type { GrowthCatAdBannerProps } from "./components/GrowthCatAdBanner";
 
 export { GrowthCatAdInterstitial } from "./components/GrowthCatAdInterstitial";
 export type { GrowthCatAdInterstitialProps } from "./components/GrowthCatAdInterstitial";
+
+export { GrowthCatSponsorBanner } from "./components/GrowthCatSponsorBanner";
+export type { GrowthCatSponsorBannerProps } from "./components/GrowthCatSponsorBanner";
 
 export { GrowthCatReferralForm } from "./components/GrowthCatReferralForm";
 export type {

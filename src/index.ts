@@ -1,6 +1,8 @@
 // ─── SDK entry point ─────────────────────────────────────────────────────────
 export { GrowthCat } from "./growthcat";
 export { GrowthCatClient } from "./client";
+export { sanitizeAnalyticsProperties } from "./services/analytics-event-tracker";
+export { GROWTHCAT_WEB_SDK_VERSION } from "./core/version";
 
 // ─── Models ───────────────────────────────────────────────────────────────────
 export { GrowthCatError } from "./models/errors";
@@ -38,16 +40,29 @@ export type {
   AdEventName,
   AdReward,
   AdRewardValidationResponse,
+  AdEventMetadata,
+  AdEventTrackingOptions,
 } from "./models/ads";
 
 export type {
   AttributionMatchType,
   AttributionLink,
   AttributionAssignment,
+  AttributionConfirmationOptions,
   AttributionResolveResult,
   GrowthCatReward,
   GrowthCatRewards,
 } from "./models/attribution";
+
+export type {
+  SponsorSlotContent,
+  GrowthCatSponsorData,
+  SponsorSlotStatus,
+  SponsorCreative,
+  SponsorPeriod,
+  SponsorEventName,
+} from "./models/sponsor";
+export type { SponsorEventOptions } from "./services/sponsor-event-tracker";
 
 export type {
   FeedbackType,
@@ -64,7 +79,12 @@ export type {
 } from "./models/feedback";
 
 // ─── Config ───────────────────────────────────────────────────────────────────
-export type { GrowthCatInitOptions, GrowthCatEnvironmentMode } from "./core/config";
+export type {
+  GrowthCatInitOptions,
+  GrowthCatEnvironmentMode,
+  GrowthCatWorkspace,
+} from "./core/config";
+export type { GrowthCatMeasurementMode } from "./core/privacy";
 
 // ─── Utils ────────────────────────────────────────────────────────────────────
-export { makeSessionId, installId } from "./core/install-id";
+export { makeSessionId, makeCreativeInstanceId, installId } from "./core/install-id";

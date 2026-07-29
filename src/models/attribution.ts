@@ -29,12 +29,20 @@ export interface AttributionResolveResult {
   matched: boolean;
   requiresConfirmation?: boolean;
   confidence?: string;
+  /** Touchpoint suggested by /resolve; pass it back on claim for confirmed matches. */
+  touchpointId?: string;
   token?: string;
   sourceType?: string;
   campaignKey?: string;
   referrerAppUserId?: string;
   deepLinkValue?: string;
   matchType?: AttributionMatchType;
+}
+
+export interface AttributionConfirmationOptions {
+  token?: string;
+  sessionId?: string;
+  touchpointId?: string;
 }
 
 export interface GrowthCatReward {
@@ -61,7 +69,9 @@ export interface AttributionClaimRequest {
   app_user_id: string;
   sdk_install_id: string;
   session_id?: string;
-  token: string;
+  /** Provide a token (universal link / manual entry) or a touchpoint_id (from resolve). */
+  token?: string;
+  touchpoint_id?: string;
   match_type: AttributionMatchType;
 }
 

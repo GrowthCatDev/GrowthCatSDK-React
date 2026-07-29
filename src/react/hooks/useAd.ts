@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { GrowthCat } from "../../growthcat";
-import { AdObject, AdFormat, AdEventName } from "../../models/ads";
+import { AdObject, AdFormat, AdEventName, AdEventMetadata } from "../../models/ads";
 import { GrowthCatError } from "../../models/errors";
+import { makeCreativeInstanceId } from "../../core/install-id";
 
 export type AdLoadState = "idle" | "loading" | "ready" | "no_fill" | "error";
 
@@ -10,9 +11,14 @@ export interface UseAdOptions {
   placementKey?: string;
   /** Format-based loading — fetches via `/v1/ads/serve`. */
   format?: AdFormat;
+  /** Set false to defer loading until the ad can be used. Default true. */
+  enabled?: boolean;
   appUserId?: string;
   sessionId?: string;
-  /** Set to false to disable automatic impression tracking. Default: true. */
+  /**
+   * @deprecated Automatic load-time impressions do not satisfy viewability.
+   * Use a visibility observer and call `trackEvent("impression", metadata)`.
+   */
   trackImpression?: boolean;
   /** Called when the ad loads successfully. */
   onLoad?: (ad: AdObject) => void;
@@ -30,10 +36,12 @@ export interface UseAdResult {
   /** Manually fire a tracking event for this ad. */
   trackEvent: (
     eventName: AdEventName,
-    metadata?: Record<string, string>
+    metadata?: Partial<AdEventMetadata>
   ) => void;
+  /** Stable for one rendered creative and regenerated on reload. */
+  creativeInstanceId: string;
   /** Reload the ad (e.g. after dismissal). */
-  reload: () => void;
+  reload: () => Promise<void>;
 }
 
 /**
@@ -61,26 +69,47 @@ export function useAd(options: UseAdOptions): UseAdResult {
   const [ad, setAd] = useState<AdObject | null>(null);
   const [state, setState] = useState<AdLoadState>("idle");
   const [error, setError] = useState<GrowthCatError | null>(null);
-  const impressionTracked = useRef(false);
+  const creativeInstanceId = useRef(makeCreativeInstanceId());
   const optionsRef = useRef(options);
+  const requestIdRef = useRef(0);
   optionsRef.current = options;
+  const placementKey = options.placementKey?.trim();
+  const format = options.format;
+  const enabled = options.enabled !== false;
 
   const load = useCallback(async () => {
-    if (!optionsRef.current.placementKey && !optionsRef.current.format) return;
+    if (!enabled) {
+      setAd(null);
+      setError(null);
+      setState("idle");
+      return;
+    }
+    if (!placementKey && !format) {
+      const missingInput = GrowthCatError.unknown(
+        "useAd requires either placementKey or format."
+      );
+      setError(missingInput);
+      setState("error");
+      optionsRef.current.onError?.(missingInput);
+      return;
+    }
 
+    const requestId = ++requestIdRef.current;
     setState("loading");
     setError(null);
-    impressionTracked.current = false;
+    setAd(null);
+    creativeInstanceId.current = makeCreativeInstanceId();
 
     try {
       const client = GrowthCat.shared;
       let loaded: AdObject | null;
 
-      if (optionsRef.current.placementKey) {
-        loaded = await client.loadAd({ placementKey: optionsRef.current.placementKey });
+      if (placementKey) {
+        loaded = await client.loadAd({ placementKey });
       } else {
-        loaded = await client.loadAd({ format: optionsRef.current.format! });
+        loaded = await client.loadAd({ format: format! });
       }
+      if (requestId !== requestIdRef.current) return;
 
       setAd(loaded);
       setState(loaded ? "ready" : "no_fill");
@@ -91,6 +120,7 @@ export function useAd(options: UseAdOptions): UseAdResult {
         optionsRef.current.onNoFill?.();
       }
     } catch (err) {
+      if (requestId !== requestIdRef.current) return;
       const gcError =
         err instanceof GrowthCatError
           ? err
@@ -99,36 +129,17 @@ export function useAd(options: UseAdOptions): UseAdResult {
       setState("error");
       optionsRef.current.onError?.(gcError);
     }
-  }, []);
+  }, [enabled, format, placementKey]);
 
   useEffect(() => {
     void load();
+    return () => {
+      requestIdRef.current += 1;
+    };
   }, [load]);
 
-  // Auto-track impression when the hook indicates ready and trackImpression is enabled.
-  useEffect(() => {
-    if (
-      state === "ready" &&
-      ad &&
-      !impressionTracked.current &&
-      optionsRef.current.trackImpression !== false
-    ) {
-      impressionTracked.current = true;
-      const format =
-        optionsRef.current.placementKey
-          ? (ad.placement?.format ?? "banner")
-          : (optionsRef.current.format ?? "banner");
-      GrowthCat.shared.trackAdEvent("impression", ad, {
-        format,
-        placementKey: optionsRef.current.placementKey,
-        appUserId: optionsRef.current.appUserId,
-        sessionId: optionsRef.current.sessionId,
-      });
-    }
-  }, [state, ad]);
-
   const trackEvent = useCallback(
-    (eventName: AdEventName, metadata?: Record<string, string>) => {
+    (eventName: AdEventName, metadata?: Partial<AdEventMetadata>) => {
       if (!ad) return;
       const format =
         optionsRef.current.placementKey
@@ -139,11 +150,12 @@ export function useAd(options: UseAdOptions): UseAdResult {
         placementKey: optionsRef.current.placementKey,
         appUserId: optionsRef.current.appUserId,
         sessionId: optionsRef.current.sessionId,
+        creativeInstanceId: creativeInstanceId.current,
         metadata,
       });
     },
     [ad]
   );
 
-  return { ad, state, error, trackEvent, reload: load };
+  return { ad, state, error, trackEvent, reload: load, creativeInstanceId: creativeInstanceId.current };
 }

@@ -1,11 +1,13 @@
 import { ApiClient } from "../core/api";
 import { GrowthCatLogger } from "../core/logger";
 import { installId, makeAdEventId } from "../core/install-id";
+import { MeasurementState } from "../core/privacy";
 import { AdEventTracker } from "./ad-event-tracker";
 import {
   AdObject,
   AdEventName,
   AdRewardValidationResponse,
+  AdEventTrackingOptions,
 } from "../models/ads";
 import { GrowthCatSDKAdsConfig } from "../models/bootstrap";
 import { GrowthCatError } from "../models/errors";
@@ -39,50 +41,67 @@ export class AdService {
 
   private cache = new Map<string, CacheEntry>();
   private staleCache = new Map<string, CacheEntry>();
+  private inFlight = new Map<string, Promise<AdObject | null>>();
   private cacheTtlSeconds = 300;
 
-  constructor(api: ApiClient, logger: GrowthCatLogger, maxOfflineEvents = 500) {
+  constructor(
+    api: ApiClient,
+    logger: GrowthCatLogger,
+    measurement: MeasurementState,
+    maxOfflineEvents = 500
+  ) {
     this.api = api;
     this.logger = logger;
-    this.eventTracker = new AdEventTracker(api, logger, maxOfflineEvents);
+    this.eventTracker = new AdEventTracker(api, logger, measurement, maxOfflineEvents);
   }
 
   configure(adsConfig: GrowthCatSDKAdsConfig) {
-    this.cacheTtlSeconds = adsConfig.adCacheTtlSeconds;
+    if (Number.isFinite(adsConfig.adCacheTtlSeconds) && adsConfig.adCacheTtlSeconds >= 0) {
+      this.cacheTtlSeconds = adsConfig.adCacheTtlSeconds;
+    }
+    this.eventTracker.setMaxOfflineEvents(adsConfig.maxOfflineAdEvents);
     this.logger.logAdDiagnostic(
       `configured adsEnabled=${adsConfig.adsEnabled}, cacheTTL=${adsConfig.adCacheTtlSeconds}`
     );
   }
 
   async loadAdByPlacementKey(placementKey: string): Promise<AdObject | null> {
-    const cached = this.getFromCache(placementKey);
+    const normalizedKey = placementKey.trim();
+    if (!normalizedKey) throw GrowthCatError.unknown("placementKey must not be empty.");
+    const cached = this.getFromCache(normalizedKey);
     if (cached !== undefined) {
-      if (cached) this.logger.logAdDiagnostic(`cache hit placementKey=${placementKey}`);
-      else this.logger.logAdNoFill(placementKey);
+      if (cached) this.logger.logAdDiagnostic(`cache hit placementKey=${normalizedKey}`);
+      else this.logger.logAdNoFill(normalizedKey);
       return cached;
     }
+    const pending = this.inFlight.get(normalizedKey);
+    if (pending) return pending;
 
-    try {
+    const request = (async () => {
+      try {
       const response = await this.api.fetchAdCatalog(
-        placementKey,
+        normalizedKey,
         currentLocale(),
         currentCountryCode()
       );
       const ttl = response.cache_ttl_seconds ?? this.cacheTtlSeconds;
       const ad = (response.ads[0] as AdObject | undefined) ?? null;
-      this.setCache(placementKey, ad, ttl);
-      if (!ad) this.logger.logAdNoFill(placementKey);
+      this.setCache(normalizedKey, ad, ttl);
+      if (!ad) this.logger.logAdNoFill(normalizedKey);
       return ad;
-    } catch (err) {
-      if (err instanceof Error && err.message.includes("network")) {
-        const stale = this.getStale(placementKey);
+      } catch (err) {
+      if (err instanceof GrowthCatError && err.code === "network") {
+        const stale = this.getStale(normalizedKey);
         if (stale !== undefined) {
-          this.logger.logAdDiagnostic(`offline — serving stale ad for placementKey=${placementKey}`);
+          this.logger.logAdDiagnostic(`offline — serving stale ad for placementKey=${normalizedKey}`);
           return stale;
         }
       }
       throw err;
-    }
+      }
+    })().finally(() => this.inFlight.delete(normalizedKey));
+    this.inFlight.set(normalizedKey, request);
+    return request;
   }
 
   async loadAdByFormat(format: "banner" | "interstitial"): Promise<AdObject | null> {
@@ -93,8 +112,11 @@ export class AdService {
       else this.logger.logAdNoFill(cacheKey);
       return cached;
     }
+    const pending = this.inFlight.get(cacheKey);
+    if (pending) return pending;
 
-    try {
+    const request = (async () => {
+      try {
       const response = await this.api.fetchAdServe(
         format,
         currentLocale(),
@@ -105,8 +127,8 @@ export class AdService {
       this.setCache(cacheKey, ad, ttl);
       if (!ad) this.logger.logAdNoFill(format);
       return ad;
-    } catch (err) {
-      if (err instanceof Error && err.message.includes("network")) {
+      } catch (err) {
+      if (err instanceof GrowthCatError && err.code === "network") {
         const stale = this.getStale(cacheKey);
         if (stale !== undefined) {
           this.logger.logAdDiagnostic(`offline — serving stale ad for format=${format}`);
@@ -114,25 +136,22 @@ export class AdService {
         }
       }
       throw err;
-    }
+      }
+    })().finally(() => this.inFlight.delete(cacheKey));
+    this.inFlight.set(cacheKey, request);
+    return request;
   }
 
-  prefetch(placementKeys: string[]) {
-    for (const key of placementKeys) {
-      void this.loadAdByPlacementKey(key).catch(() => {});
-    }
+  async prefetch(placementKeys: string[]): Promise<void> {
+    await Promise.all(
+      placementKeys.map((key) => this.loadAdByPlacementKey(key).catch(() => null))
+    );
   }
 
   trackEvent(
     eventName: AdEventName,
     ad: AdObject,
-    options: {
-      format: string;
-      placementKey?: string;
-      appUserId?: string;
-      sessionId?: string;
-      metadata?: Record<string, string>;
-    }
+    options: AdEventTrackingOptions
   ) {
     this.eventTracker.track(eventName, ad, options);
   }
@@ -186,9 +205,12 @@ export class AdService {
   }
 
   private setCache(key: string, ad: AdObject | null, ttlSeconds: number) {
+    const safeTtlSeconds = Number.isFinite(ttlSeconds) && ttlSeconds >= 0
+      ? ttlSeconds
+      : this.cacheTtlSeconds;
     const entry: CacheEntry = {
       ad,
-      expiresAt: Date.now() + ttlSeconds * 1000,
+      expiresAt: Date.now() + safeTtlSeconds * 1000,
     };
     this.cache.set(key, entry);
     this.staleCache.delete(key);

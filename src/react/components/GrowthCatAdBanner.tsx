@@ -37,34 +37,63 @@ export function GrowthCatAdBanner({
     format,
     appUserId,
     sessionId,
-    trackImpression: true,
+    trackImpression: false,
   });
 
-  const containerRef = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLAnchorElement>(null);
   const impressionSent = useRef(false);
+  const visibilityTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const visibleFraction = useRef(0);
 
-  // Intersection Observer for 50% visibility impression.
+  // A banner impression requires at least 50% continuous visibility for 1s.
   useEffect(() => {
-    if (!ad || impressionSent.current || !containerRef.current) return;
+    if (!ad || !containerRef.current) return;
+    impressionSent.current = false;
+    const clearVisibilityTimer = () => {
+      if (visibilityTimer.current != null) clearTimeout(visibilityTimer.current);
+      visibilityTimer.current = null;
+    };
+    const beginVisibilityTimer = () => {
+      if (visibilityTimer.current != null || impressionSent.current) return;
+      if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
+      visibilityTimer.current = setTimeout(() => {
+        visibilityTimer.current = null;
+        if (impressionSent.current || visibleFraction.current < 0.5) return;
+        if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
+        impressionSent.current = true;
+        trackEvent("impression", {
+          visible_fraction: visibleFraction.current,
+          visible_duration_ms: 1000,
+        });
+      }, 1000);
+    };
     const observer = new IntersectionObserver(
       (entries) => {
-        if (entries[0]?.intersectionRatio >= 0.5 && !impressionSent.current) {
-          impressionSent.current = true;
-          trackEvent("impression");
-        }
+        visibleFraction.current = entries[0]?.intersectionRatio ?? 0;
+        if (visibleFraction.current >= 0.5) beginVisibilityTimer();
+        else clearVisibilityTimer();
       },
       { threshold: 0.5 }
     );
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible" && visibleFraction.current >= 0.5) {
+        beginVisibilityTimer();
+      } else {
+        clearVisibilityTimer();
+      }
+    };
     observer.observe(containerRef.current);
-    return () => observer.disconnect();
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      clearVisibilityTimer();
+      observer.disconnect();
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
   }, [ad, trackEvent]);
 
   const handleTap = useCallback(() => {
     if (!ad) return;
     trackEvent("click");
-    if (ad.creative.destinationUrl) {
-      window.open(ad.creative.destinationUrl, "_blank", "noopener,noreferrer");
-    }
     onTap?.();
   }, [ad, trackEvent, onTap]);
 
@@ -101,7 +130,7 @@ interface BannerLayoutProps {
   minHeight: number;
   className?: string;
   style?: React.CSSProperties;
-  containerRef: React.RefObject<HTMLDivElement>;
+  containerRef: React.RefObject<HTMLAnchorElement>;
   onTap: () => void;
 }
 
@@ -127,13 +156,14 @@ function BannerLayout({ ad, minHeight, className, style, containerRef, onTap }: 
   const titleWeight = layout?.title?.fontWeight ?? "600";
 
   return (
-    <div
+    <a
       ref={containerRef}
       className={className}
       onClick={onTap}
-      role="button"
-      tabIndex={0}
-      onKeyDown={(e) => e.key === "Enter" && onTap()}
+      href={creative.destinationUrl}
+      target={creative.destinationUrl ? "_blank" : undefined}
+      rel={creative.destinationUrl ? "noopener noreferrer" : undefined}
+      aria-label={creative.headline ?? "Sponsored content"}
       style={{
         display: "flex",
         alignItems: "center",
@@ -147,6 +177,7 @@ function BannerLayout({ ad, minHeight, className, style, containerRef, onTap }: 
         paddingBottom: paddingV,
         cursor: "pointer",
         userSelect: "none",
+        textDecoration: "none",
         boxSizing: "border-box",
         ...style,
       }}
@@ -212,7 +243,7 @@ function BannerLayout({ ad, minHeight, className, style, containerRef, onTap }: 
 
       {/* CTA */}
       {creative.ctaText && (
-        <button
+        <span
           style={{
             flexShrink: 0,
             fontSize: 12,
@@ -223,12 +254,11 @@ function BannerLayout({ ad, minHeight, className, style, containerRef, onTap }: 
             borderRadius: ctaBorderRadius,
             padding: "6px 12px",
             cursor: "pointer",
-            pointerEvents: "none", // parent handles click
           }}
         >
           {creative.ctaText}
-        </button>
+        </span>
       )}
-    </div>
+    </a>
   );
 }

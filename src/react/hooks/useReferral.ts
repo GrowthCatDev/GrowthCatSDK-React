@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { GrowthCat } from "../../growthcat";
 import { ReferralRedemptionResult, GrowthCatAnalyticsContext } from "../../models/referral";
 import { GrowthCatError } from "../../models/errors";
@@ -44,19 +44,27 @@ export function useReferral(options: UseReferralOptions = {}): UseReferralResult
   const [isLoading, setIsLoading] = useState(false);
   const [result, setResult] = useState<ReferralRedemptionResult | null>(null);
   const [error, setError] = useState<GrowthCatError | null>(null);
+  const requestIdRef = useRef(0);
+
+  useEffect(() => () => {
+    requestIdRef.current += 1;
+  }, []);
 
   const validateCode = useCallback(
     async (code: string): Promise<ReferralRedemptionResult | null> => {
+      const requestId = ++requestIdRef.current;
       setIsLoading(true);
       setError(null);
       setResult(null);
 
       try {
         const r = await GrowthCat.shared.validateReferralCode(code, options.context);
+        if (requestId !== requestIdRef.current) return null;
         setResult(r);
         options.onSuccess?.(r);
         return r;
       } catch (err) {
+        if (requestId !== requestIdRef.current) return null;
         const gcError =
           err instanceof GrowthCatError
             ? err
@@ -65,7 +73,7 @@ export function useReferral(options: UseReferralOptions = {}): UseReferralResult
         options.onError?.(gcError);
         return null;
       } finally {
-        setIsLoading(false);
+        if (requestId === requestIdRef.current) setIsLoading(false);
       }
     },
     [options]
@@ -83,6 +91,7 @@ export function useReferral(options: UseReferralOptions = {}): UseReferralResult
   );
 
   const reset = useCallback(() => {
+    requestIdRef.current += 1;
     setIsLoading(false);
     setResult(null);
     setError(null);

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useId, useRef, useState } from "react";
 import { useFeedbackBoard, useFeedbackSubmit } from "../hooks/useFeedback";
 import {
   DEFAULT_FEEDBACK_DARK_THEME,
@@ -10,6 +10,7 @@ import {
   GrowthCatFeedbackThemeColors,
 } from "../../models/feedback";
 import { GrowthCat } from "../../growthcat";
+import { createPortal } from "react-dom";
 
 export interface GrowthCatFeedbackBoardProps {
   /** Pre-apply a type filter. `undefined` shows all items. */
@@ -392,6 +393,39 @@ function ComposeSheet({
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
   const { isSubmitting, result, error, submit } = useFeedbackSubmit();
+  const titleId = useId();
+  const bodyId = useId();
+  const headingId = useId();
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    closeButtonRef.current?.focus();
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+      if (event.key !== "Tab" || !panelRef.current) return;
+      const focusable = [...panelRef.current.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+      )];
+      if (focusable.length === 0) return;
+      const first = focusable[0]!;
+      const last = focusable[focusable.length - 1]!;
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [onClose]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -400,8 +434,11 @@ function ComposeSheet({
     if (r) onSubmitted();
   };
 
-  return (
+  const sheet = (
     <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby={headingId}
       style={{
         position: "fixed",
         inset: 0,
@@ -416,6 +453,7 @@ function ComposeSheet({
       onClick={onClose}
     >
       <div
+        ref={panelRef}
         onClick={(e) => e.stopPropagation()}
         style={{
           backgroundColor: cardColor,
@@ -430,11 +468,13 @@ function ComposeSheet({
         }}
       >
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
-          <h3 style={{ margin: 0, fontSize: 18, fontWeight: 700, color: primaryText }}>
+          <h3 id={headingId} style={{ margin: 0, fontSize: 18, fontWeight: 700, color: primaryText }}>
             {strings?.title ?? "Send Feedback"}
           </h3>
           <button
+            ref={closeButtonRef}
             onClick={onClose}
+            aria-label={strings?.cancel ?? "Close"}
             style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", color: secondaryText }}
           >
             ×
@@ -448,7 +488,7 @@ function ComposeSheet({
         ) : (
           <form onSubmit={handleSubmit}>
             {/* Type selector */}
-            <label style={{ fontSize: 13, fontWeight: 600, color: secondaryText, display: "block", marginBottom: 6 }}>
+            <label htmlFor={titleId} style={{ fontSize: 13, fontWeight: 600, color: secondaryText, display: "block", marginBottom: 6 }}>
               {strings?.typeLabel ?? "Category"}
             </label>
             <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
@@ -479,6 +519,7 @@ function ComposeSheet({
               {strings?.titleLabel ?? "Summary"}
             </label>
             <input
+              id={titleId}
               type="text"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
@@ -497,10 +538,11 @@ function ComposeSheet({
             />
 
             {/* Body */}
-            <label style={{ fontSize: 13, fontWeight: 600, color: secondaryText, display: "block", marginBottom: 6 }}>
+            <label htmlFor={bodyId} style={{ fontSize: 13, fontWeight: 600, color: secondaryText, display: "block", marginBottom: 6 }}>
               {strings?.detailsLabel ?? "Details"}
             </label>
             <textarea
+              id={bodyId}
               value={body}
               onChange={(e) => setBody(e.target.value)}
               placeholder={strings?.detailsPlaceholder ?? "Tell us more…"}
@@ -547,6 +589,7 @@ function ComposeSheet({
       </div>
     </div>
   );
+  return createPortal(sheet, document.body);
 }
 
 function usePrefersDarkMode(): boolean {

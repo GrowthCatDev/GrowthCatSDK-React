@@ -4,6 +4,11 @@ import { GrowthCatDebugLogger } from "./core/logger";
 import { AdService } from "./services/ad-service";
 import { AttributionService } from "./services/attribution-service";
 import { FeedbackService } from "./services/feedback-service";
+import { AnalyticsEventTracker, sanitizeAnalyticsProperties } from "./services/analytics-event-tracker";
+import { SponsorEventOptions, SponsorEventTracker } from "./services/sponsor-event-tracker";
+import { MeasurementState, GrowthCatMeasurementMode } from "./core/privacy";
+import { installId, makeAdEventId, makeCreativeInstanceId } from "./core/install-id";
+import { GROWTHCAT_WEB_SDK_VERSION } from "./core/version";
 import {
   GrowthCatSDKBootstrap,
   GrowthCatSDKConfig,
@@ -20,13 +25,16 @@ import {
   AdFormat,
   AdEventName,
   AdRewardValidationResponse,
+  AdEventTrackingOptions,
 } from "./models/ads";
 import {
   AttributionLink,
   AttributionAssignment,
+  AttributionConfirmationOptions,
   AttributionResolveResult,
   GrowthCatRewards,
 } from "./models/attribution";
+import { GrowthCatSponsorData, SponsorSlotContent } from "./models/sponsor";
 import {
   FeedbackUser,
   FeedbackSubmission,
@@ -46,21 +54,33 @@ export class GrowthCatClient {
   readonly adService: AdService;
   readonly attributionService: AttributionService;
   readonly feedbackService: FeedbackService;
+  private readonly measurement: MeasurementState;
+  private readonly analyticsEventTracker: AnalyticsEventTracker;
+  private readonly sponsorEventTracker: SponsorEventTracker;
+  private readonly sponsorCache = new Map<string, SponsorSlotContent>();
 
   private bootstrapCache: GrowthCatSDKBootstrap | null = null;
+  private bootstrapPromise: Promise<GrowthCatSDKBootstrap> | null = null;
   private shutdownFlag = false;
 
   constructor(config: GrowthCatConfiguration) {
     this.config = config;
     this.logger = new GrowthCatDebugLogger(config.logsEnabled);
     this.api = new ApiClient(config);
-    this.adService = new AdService(this.api, this.logger);
+    this.measurement = new MeasurementState(config.measurementMode);
+    this.adService = new AdService(this.api, this.logger, this.measurement);
     this.attributionService = new AttributionService(this.api, this.logger);
     this.feedbackService = new FeedbackService(this.api, this.logger);
+    this.analyticsEventTracker = new AnalyticsEventTracker(this.api, this.logger, this.measurement);
+    this.sponsorEventTracker = new SponsorEventTracker(this.api, this.logger, this.measurement);
   }
 
   get isConfigured(): boolean {
     return true;
+  }
+
+  get isShutdown(): boolean {
+    return this.shutdownFlag;
   }
 
   get sdkConfig(): GrowthCatSDKConfig | null {
@@ -75,14 +95,36 @@ export class GrowthCatClient {
     return this.bootstrapCache?.adsConfig ?? null;
   }
 
+  get measurementMode(): GrowthCatMeasurementMode {
+    return this.measurement.measurementMode;
+  }
+
+  setMeasurementMode(mode: GrowthCatMeasurementMode): void {
+    this.measurement.setMode(mode);
+    if (mode === "disabled") {
+      this.attributionService.clearQueuedEvents();
+    }
+  }
+
   // ─── Bootstrap ─────────────────────────────────────────────────────────────
 
   async refreshSDKBootstrap(): Promise<GrowthCatSDKBootstrap> {
-    const bootstrap = await this.api.fetchSDKBootstrap();
-    this.bootstrapCache = bootstrap;
-    this.adService.configure(bootstrap.adsConfig);
-    this.logger.logBootstrapSuccess();
-    return bootstrap;
+    if (this.bootstrapPromise) return this.bootstrapPromise;
+    this.bootstrapPromise = this.api.fetchSDKBootstrap()
+      .then((bootstrap) => {
+        if (this.shutdownFlag) {
+          throw GrowthCatError.unknown("SDK client was shut down.");
+        }
+        this.bootstrapCache = bootstrap;
+        this.api.setMeasurementSchemaVersion(bootstrap.adsConfig.measurementSchemaVersion);
+        this.adService.configure(bootstrap.adsConfig);
+        this.logger.logBootstrapSuccess();
+        return bootstrap;
+      })
+      .finally(() => {
+        this.bootstrapPromise = null;
+      });
+    return this.bootstrapPromise;
   }
 
   async refreshSDKConfig(): Promise<GrowthCatSDKConfig> {
@@ -125,6 +167,7 @@ export class GrowthCatClient {
   }
 
   async recordReferralClick(code: string, context?: GrowthCatAnalyticsContext): Promise<void> {
+    if (!this.measurement.allowsOptionalAnalytics()) return;
     const normalized = code.trim().toUpperCase();
     if (!normalized) throw GrowthCatError.invalidCode("Please enter a referral code.");
     await this.api.recordReferralClick({
@@ -145,16 +188,24 @@ export class GrowthCatClient {
       properties?: Record<string, GrowthCatAnalyticsValue>;
     }
   ): Promise<void> {
-    await this.api.recordAnalyticsEvent({
+    if (!this.measurement.allowsOptionalAnalytics()) return;
+    const eventAt = options?.eventAt ?? new Date();
+    this.analyticsEventTracker.enqueue({
+      schema_version: 2,
+      sdk_event_id: makeAdEventId(eventName, "analytics"),
       event_name: eventName,
       app_user_id: this.attributionService.getAppUserId() ?? undefined,
       code: options?.code?.trim().toUpperCase(),
-      event_at: options?.eventAt?.toISOString(),
-      session_id: options?.context?.sessionId,
+      event_at: eventAt.toISOString(),
+      session_id: options?.context?.sessionId ?? this.measurement.sessionId,
       source: options?.context?.source,
-      properties: options?.properties,
+      properties: sanitizeAnalyticsProperties(eventName, options?.properties),
       platform: "web",
       locale: typeof navigator !== "undefined" ? navigator.language : undefined,
+      country_code: currentCountryCode(),
+      measurement_mode: this.measurement.measurementMode,
+      sdk_version: GROWTHCAT_WEB_SDK_VERSION,
+      sdk_install_id: installId(),
     });
   }
 
@@ -173,13 +224,7 @@ export class GrowthCatClient {
   trackAdEvent(
     eventName: AdEventName,
     ad: AdObject,
-    options: {
-      format: AdFormat;
-      placementKey?: string;
-      appUserId?: string;
-      sessionId?: string;
-      metadata?: Record<string, string>;
-    }
+    options: AdEventTrackingOptions = {}
   ) {
     this.adService.trackEvent(eventName, ad, options);
   }
@@ -198,9 +243,10 @@ export class GrowthCatClient {
     );
   }
 
-  prefetchAdCatalogs(placementKeys: string[]) {
-    if (this.bootstrapCache?.adsConfig.adsEnabled) {
-      this.adService.prefetch(placementKeys);
+  async prefetchAdCatalogs(placementKeys: string[]): Promise<void> {
+    const bootstrap = await this.resolvedBootstrap();
+    if (bootstrap.adsConfig.adsEnabled) {
+      await this.adService.prefetch(placementKeys);
     }
   }
 
@@ -212,6 +258,10 @@ export class GrowthCatClient {
 
   setAppUserId(userId: string) {
     this.attributionService.setAppUserId(userId);
+  }
+
+  clearAppUserId() {
+    this.attributionService.clearAppUserId();
   }
 
   async generateShareLink(options: {
@@ -227,14 +277,20 @@ export class GrowthCatClient {
   }
 
   async resolveAttribution(sessionId?: string): Promise<AttributionResolveResult | null> {
+    if (!this.measurement.allowsOptionalAnalytics()) return null;
     return this.attributionService.resolveAttribution(sessionId);
   }
 
-  async confirmAttribution(token: string, sessionId?: string): Promise<AttributionAssignment | null> {
-    return this.attributionService.confirmAttribution(token, sessionId);
+  async confirmAttribution(
+    tokenOrOptions: string | AttributionConfirmationOptions,
+    sessionId?: string,
+    touchpointId?: string
+  ): Promise<AttributionAssignment | null> {
+    return this.attributionService.confirmAttribution(tokenOrOptions, sessionId, touchpointId);
   }
 
   async track(eventName: string, properties?: Record<string, GrowthCatAnalyticsValue>): Promise<void> {
+    if (!this.measurement.allowsEssentialMeasurement()) return;
     await this.attributionService.track(eventName, properties);
   }
 
@@ -242,12 +298,92 @@ export class GrowthCatClient {
     return this.attributionService.rewards();
   }
 
+  // ─── Sponsors ──────────────────────────────────────────────────────────────
+
+  /**
+   * Current content for a sponsor slot: a live sponsor creative, an availability
+   * payload for rendering a "Sponsor this app" placeholder, or empty.
+   */
+  async sponsor(slotKey: string): Promise<SponsorSlotContent> {
+    const normalizedSlotKey = slotKey.trim();
+    if (!normalizedSlotKey) throw GrowthCatError.unknown("slotKey must not be empty.");
+    const sponsor = await this.api.getSponsor(normalizedSlotKey);
+    this.sponsorCache.set(normalizedSlotKey, sponsor);
+    return sponsor;
+  }
+
+  /**
+   * Load a sponsor and assign a stable identity to this rendered instance.
+   * Keep the returned value while it is rendered and pass the same object to
+   * the sponsor tracking methods below.
+   */
+  async loadSponsorData(slotKey: string): Promise<GrowthCatSponsorData> {
+    const sponsor = await this.sponsor(slotKey);
+    return { ...sponsor, creativeInstanceId: makeCreativeInstanceId() };
+  }
+
+  /** Track a qualified sponsor impression. Returns false when not viewable/live. */
+  async trackSponsorImpression(
+    data: GrowthCatSponsorData,
+    options: { visibleFraction: number; visibleDurationMs: number; sessionId?: string }
+  ): Promise<boolean> {
+    if (
+      data.status !== "live" ||
+      !data.creative ||
+      options.visibleFraction < 0.5 ||
+      options.visibleDurationMs < 1000
+    ) {
+      return false;
+    }
+    this.sponsorEventTracker.track(data.slotKey, "impression", data, {
+      creativeInstanceId: data.creativeInstanceId,
+      sessionId: options.sessionId,
+      visibleFraction: Math.max(0, Math.min(1, options.visibleFraction)),
+      visibleDurationMs: Math.max(0, Math.round(options.visibleDurationMs)),
+    });
+    return true;
+  }
+
+  /** Track a deliberate click on a live sponsor creative. */
+  async trackSponsorClick(
+    data: GrowthCatSponsorData,
+    options?: { sessionId?: string }
+  ): Promise<boolean> {
+    if (data.status !== "live" || !data.creative) return false;
+    this.sponsorEventTracker.track(data.slotKey, "click", data, {
+      creativeInstanceId: data.creativeInstanceId,
+      sessionId: options?.sessionId,
+    });
+    return true;
+  }
+
+  /** Flush queued sponsor events immediately. */
+  async flushSponsorEvents(): Promise<void> {
+    await this.sponsorEventTracker.flush();
+  }
+
+  /** Track an impression or click on the currently live sponsor. Best-effort. */
+  async trackSponsorEvent(
+    slotKey: string,
+    eventName: "impression" | "click",
+    options?: SponsorEventOptions
+  ): Promise<void> {
+    const sponsor = this.sponsorCache.get(slotKey);
+    if (!sponsor) {
+      try { await this.api.trackSponsorEvent(slotKey, eventName); } catch { /* best effort */ }
+      return;
+    }
+    this.sponsorEventTracker.track(slotKey, eventName, sponsor, options);
+  }
+
   // ─── Feedback ──────────────────────────────────────────────────────────────
 
   configureFeedback(options: {
     user?: FeedbackUser;
     theme?: Partial<GrowthCatFeedbackTheme>;
-    strings?: Partial<GrowthCatFeedbackStrings>;
+    strings?: Partial<Omit<GrowthCatFeedbackStrings, "typeLabels">> & {
+      typeLabels?: Partial<GrowthCatFeedbackStrings["typeLabels"]>;
+    };
     disabledAutomaticMetadataKeys?: string[];
   }) {
     if (options.user) this.feedbackService.identify(options.user);
@@ -262,12 +398,18 @@ export class GrowthCatClient {
       };
     }
     if (options.strings) {
-      this.feedbackService.strings = { ...this.feedbackService.strings, ...options.strings };
+      this.feedbackService.strings = {
+        ...this.feedbackService.strings,
+        ...options.strings,
+        typeLabels: {
+          ...this.feedbackService.strings.typeLabels,
+          ...options.strings.typeLabels,
+        },
+      };
     }
     if (options.disabledAutomaticMetadataKeys) {
-      for (const key of options.disabledAutomaticMetadataKeys) {
-        this.feedbackService.disabledMetadataKeys.add(key);
-      }
+      this.feedbackService.disabledMetadataKeys =
+        new Set(options.disabledAutomaticMetadataKeys);
     }
   }
 
@@ -316,10 +458,21 @@ export class GrowthCatClient {
   shutdown() {
     this.shutdownFlag = true;
     this.adService.shutdown();
+    this.analyticsEventTracker.shutdown();
+    this.sponsorEventTracker.shutdown();
+    this.attributionService.shutdown();
   }
 
   private async resolvedBootstrap(): Promise<GrowthCatSDKBootstrap> {
     if (this.bootstrapCache) return this.bootstrapCache;
     return this.refreshSDKBootstrap();
+  }
+}
+
+function currentCountryCode(): string | undefined {
+  try {
+    return new Intl.Locale(navigator.language).region ?? undefined;
+  } catch {
+    return undefined;
   }
 }

@@ -1,4 +1,5 @@
 export type FeedbackType = "idea" | "bug" | "feedback" | "question";
+import { GrowthCatError } from "./errors";
 
 export type FeedbackItemStatus =
   | "new"
@@ -174,25 +175,34 @@ export interface FeedbackSubmitRequest {
   type: FeedbackType;
   title: string;
   body?: string;
-  user_id?: string;
+  external_user_id?: string;
+  external_user_email?: string;
+  external_user_name?: string;
   anonymous_id?: string;
-  email?: string;
-  name?: string;
   metadata?: Record<string, string>;
   platform: "web";
 }
 
 export function parseFeedbackItem(raw: Record<string, unknown>): FeedbackBoardItem {
+  const itemId = String(raw["id"] ?? raw["item_id"] ?? "").trim();
+  const title = String(raw["title"] ?? "").trim();
+  if (!itemId || !title) {
+    throw GrowthCatError.server(502, "GrowthCat returned an invalid feedback item.");
+  }
   return {
-    itemId: String(raw["id"] ?? raw["item_id"] ?? ""),
+    itemId,
     type: (raw["type"] ?? "feedback") as FeedbackType,
-    title: String(raw["title"] ?? ""),
-    body: raw["body"] != null ? String(raw["body"]) : undefined,
+    title,
+    body: raw["body"] != null
+      ? String(raw["body"])
+      : raw["body_preview"] != null
+        ? String(raw["body_preview"])
+        : undefined,
     status: (raw["status"] ?? "new") as FeedbackItemStatus,
     voteCount: Number(raw["vote_count"] ?? 0),
     commentCount: Number(raw["comment_count"] ?? 0),
     isPinned: Boolean(raw["is_pinned"] ?? false),
-    hasVoted: Boolean(raw["has_voted"] ?? false),
+    hasVoted: Boolean(raw["viewer_has_voted"] ?? raw["has_voted"] ?? false),
     createdAt: new Date(String(raw["created_at"] ?? new Date().toISOString())),
     updatedAt: new Date(String(raw["updated_at"] ?? new Date().toISOString())),
   };

@@ -1,4 +1,4 @@
-const STORAGE_KEY = "growthcat_sdk_install_id";
+const STORAGE_KEY_PREFIX = "growthcat_sdk_install_id";
 
 function generateId(): string {
   if (typeof crypto !== "undefined" && crypto.randomUUID) {
@@ -11,35 +11,62 @@ function generateId(): string {
   });
 }
 
-function makeEventId(eventName: string, format: string): string {
-  return `${installId()}_${eventName}_${format}_${Date.now()}`;
+let identityScope = "unconfigured";
+const cachedInstallIds = new Map<string, string>();
+
+function stableScope(value: string): string {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(36);
 }
 
-let _cached: string | null = null;
+export function configureIdentityScope(apiKey: string, baseUrl: string): void {
+  identityScope = stableScope(`${baseUrl}|${apiKey}`);
+}
+
+/** Builds a versioned browser-storage key isolated to the active GrowthCat project. */
+export function scopedStorageKey(name: string, version: number): string {
+  return `${name}:v${version}:${identityScope}`;
+}
+
+function storageKey(): string {
+  return scopedStorageKey(STORAGE_KEY_PREFIX, 2);
+}
 
 export function installId(): string {
-  if (_cached) return _cached;
+  const cached = cachedInstallIds.get(identityScope);
+  if (cached) return cached;
 
   try {
-    const stored = localStorage.getItem(STORAGE_KEY);
+    const stored = localStorage.getItem(storageKey());
     if (stored) {
-      _cached = stored;
+      cachedInstallIds.set(identityScope, stored);
       return stored;
     }
     const id = generateId();
-    localStorage.setItem(STORAGE_KEY, id);
-    _cached = id;
+    localStorage.setItem(storageKey(), id);
+    cachedInstallIds.set(identityScope, id);
     return id;
   } catch {
-    if (!_cached) _cached = generateId();
-    return _cached;
+    const id = generateId();
+    cachedInstallIds.set(identityScope, id);
+    return id;
   }
 }
 
 export function makeAdEventId(eventName: string, format: string): string {
-  return makeEventId(eventName, format);
+  void eventName;
+  void format;
+  return generateId();
 }
 
 export function makeSessionId(): string {
+  return generateId();
+}
+
+export function makeCreativeInstanceId(): string {
   return generateId();
 }

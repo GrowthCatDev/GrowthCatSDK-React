@@ -1,4 +1,5 @@
 // ─── Format ───────────────────────────────────────────────────────────────────
+import { GrowthCatError } from "./errors";
 
 export type AdFormat = "banner" | "interstitial";
 
@@ -179,21 +180,44 @@ export type AdEventName =
 
 export interface AdEventPayload {
   sdk_event_id: string;
+  creative_instance_id: string;
   format: string;
   campaign_id: string;
   creative_id?: string;
   event_name: string;
   locale?: string;
+  country_code?: string;
   app_user_id?: string;
   session_id?: string;
   sdk_install_id: string;
   tracking_token: string;
   occurred_at: string;
-  metadata?: Record<string, string>;
+  measurement_mode: import("../core/privacy").GrowthCatMeasurementMode;
+  sdk_version: string;
+  metadata?: AdEventMetadata;
 }
 
 export interface AdEventBatchRequest {
+  schema_version: 2;
   events: AdEventPayload[];
+}
+
+export interface AdEventMetadata {
+  measurement_version: 2;
+  visible_fraction?: number;
+  visible_duration_ms?: number;
+  player_position_ms?: number;
+  quartile?: 0 | 25 | 50 | 75 | 100;
+}
+
+export interface AdEventTrackingOptions {
+  /** Inferred from `ad.placement` when available. */
+  format?: AdFormat;
+  placementKey?: string;
+  appUserId?: string;
+  sessionId?: string;
+  creativeInstanceId?: string;
+  metadata?: Partial<AdEventMetadata>;
 }
 
 // ─── Reward validation ────────────────────────────────────────────────────────
@@ -267,6 +291,14 @@ export interface RawAdObject {
 }
 
 export function parseAdObject(raw: RawAdObject): AdObject {
+  if (
+    !raw ||
+    !raw.campaign?.id ||
+    !raw.creative?.id ||
+    !raw.tracking?.token
+  ) {
+    throw GrowthCatError.server(502, "GrowthCat returned an invalid ad payload.");
+  }
   const layoutRaw = (raw.creative.layout ?? raw.creative.layout_json) as
     | Record<string, unknown>
     | undefined;

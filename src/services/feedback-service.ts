@@ -13,12 +13,10 @@ import {
   DEFAULT_FEEDBACK_STRINGS,
 } from "../models/feedback";
 import { GrowthCatError } from "../models/errors";
-
-const ANON_ID_KEY = "growthcat_feedback_anon_id";
+import { makeSessionId, scopedStorageKey } from "../core/install-id";
 
 function generateAnonId(): string {
-  const suffix = Math.random().toString(36).slice(2, 8);
-  return `anon_${suffix}`;
+  return `anon_${makeSessionId()}`;
 }
 
 export class FeedbackService {
@@ -26,6 +24,7 @@ export class FeedbackService {
   private readonly logger: GrowthCatLogger;
   private boardSlug: string | null = null;
   private slugPromise: Promise<string> | null = null;
+  private readonly anonymousIdKey = scopedStorageKey("growthcat_feedback_anon_id", 2);
 
   user: FeedbackUser | null = null;
   theme: GrowthCatFeedbackTheme = DEFAULT_FEEDBACK_THEME;
@@ -53,17 +52,18 @@ export class FeedbackService {
   }
 
   async submit(submission: FeedbackSubmission): Promise<FeedbackSubmitResult> {
-    const slug = await this.resolveSlug();
+    const title = submission.title.trim();
+    if (!title) throw GrowthCatError.unknown("Feedback title must not be empty.");
     const metadata = this.buildMetadata(submission.metadata);
 
-    return this.api.submitFeedback(slug, {
+    return this.api.submitFeedback({
       type: submission.type,
-      title: submission.title,
+      title,
       body: submission.body || undefined,
-      user_id: this.user?.id,
+      external_user_id: this.user?.id,
       anonymous_id: this.user ? undefined : this.anonymousId,
-      email: this.user?.email,
-      name: this.user?.name,
+      external_user_email: this.user?.email,
+      external_user_name: this.user?.name,
       metadata,
       platform: "web",
     });
@@ -71,29 +71,34 @@ export class FeedbackService {
 
   async fetchBoard(type?: FeedbackType): Promise<FeedbackBoardItem[]> {
     const slug = await this.resolveSlug();
-    return this.api.fetchFeedbackBoard(slug, type);
+    return this.api.fetchFeedbackBoard(slug, type, this.user?.id, this.user ? undefined : this.anonymousId);
   }
 
   async vote(itemId: string): Promise<FeedbackVoteResult> {
+    if (!itemId.trim()) throw GrowthCatError.unknown("Feedback itemId must not be empty.");
     const slug = await this.resolveSlug();
-    return this.api.voteFeedbackItem(slug, itemId, this.user?.id, this.user ? undefined : this.anonymousId);
+    return this.api.voteFeedbackItem(slug, itemId.trim(), this.user?.id, this.user ? undefined : this.anonymousId);
   }
 
   async unvote(itemId: string): Promise<FeedbackVoteResult> {
+    if (!itemId.trim()) throw GrowthCatError.unknown("Feedback itemId must not be empty.");
     const slug = await this.resolveSlug();
-    return this.api.unvoteFeedbackItem(slug, itemId, this.user?.id, this.user ? undefined : this.anonymousId);
+    return this.api.unvoteFeedbackItem(slug, itemId.trim(), this.user?.id, this.user ? undefined : this.anonymousId);
   }
 
   private async resolveSlug(): Promise<string> {
     if (this.boardSlug) return this.boardSlug;
     if (this.slugPromise) return this.slugPromise;
 
-    this.slugPromise = this.api.fetchFeedbackConfig().then(({ slug }) => {
-      if (!slug) throw GrowthCatError.unknown("Feedback board not configured.");
-      this.boardSlug = slug;
-      this.slugPromise = null;
-      return slug;
-    });
+    this.slugPromise = this.api.fetchFeedbackConfig()
+      .then(({ slug }) => {
+        if (!slug) throw GrowthCatError.unknown("Feedback board not configured.");
+        this.boardSlug = slug;
+        return slug;
+      })
+      .finally(() => {
+        this.slugPromise = null;
+      });
     return this.slugPromise;
   }
 
@@ -110,10 +115,10 @@ export class FeedbackService {
 
   private loadOrCreateAnonId(): string {
     try {
-      const stored = localStorage.getItem(ANON_ID_KEY);
+      const stored = localStorage.getItem(this.anonymousIdKey);
       if (stored) return stored;
       const id = generateAnonId();
-      localStorage.setItem(ANON_ID_KEY, id);
+      localStorage.setItem(this.anonymousIdKey, id);
       return id;
     } catch {
       return generateAnonId();

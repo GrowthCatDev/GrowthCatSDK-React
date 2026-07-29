@@ -32,6 +32,7 @@ export interface GrowthCatSDKAdsConfig {
   adsEnabled: boolean;
   adCacheTtlSeconds: number;
   maxOfflineAdEvents: number;
+  measurementSchemaVersion: number;
 }
 
 export function parseBootstrap(raw: Record<string, unknown>): GrowthCatSDKBootstrap {
@@ -71,8 +72,14 @@ export function parseBootstrap(raw: Record<string, unknown>): GrowthCatSDKBootst
     },
     adsConfig: {
       adsEnabled: Boolean(adsRaw["ads_enabled"] ?? false),
-      adCacheTtlSeconds: Number(adsRaw["ad_cache_ttl_seconds"] ?? 300),
-      maxOfflineAdEvents: Number(adsRaw["max_offline_ad_events"] ?? 500),
+      adCacheTtlSeconds: finiteNumber(adsRaw["ad_cache_ttl_seconds"], 300, 0),
+      maxOfflineAdEvents: finiteNumber(adsRaw["max_offline_ad_events"], 500, 1),
+      measurementSchemaVersion: finiteNumber(adsRaw["measurement_schema_version"], 1, 1),
     },
   };
+}
+
+function finiteNumber(raw: unknown, fallback: number, minimum: number): number {
+  const value = Number(raw ?? fallback);
+  return Number.isFinite(value) && value >= minimum ? value : fallback;
 }

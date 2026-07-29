@@ -1,0 +1,4 @@
+interface:
+  display_name: "Integrate GrowthCat Web"
+  short_description: "Add GrowthCat features to web apps"
+  default_prompt: "Use $growthcat-web-integration to integrate GrowthCat feedback into this app."

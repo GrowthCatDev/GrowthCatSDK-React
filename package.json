@@ -1,11 +1,12 @@
 {
 	"name": "@growthcat/web",
-	"version": "0.0.2",
-	"description": "GrowthCat Web SDK — referral codes, ads, attribution, and feedback for React and web apps.",
+	"version": "0.0.4",
+	"description": "GrowthCat Web SDK — referral codes, ads, sponsorships, attribution, and feedback for React and web apps.",
 	"keywords": [
 		"growthcat",
 		"referral",
 		"ads",
+		"sponsorships",
 		"attribution",
 		"feedback",
 		"react",
@@ -35,9 +36,12 @@
 	"sideEffects": false,
 	"scripts": {
 		"build": "tsup src/index.ts src/react/index.ts --format cjs,esm --dts --sourcemap --clean",
+		"test": "npm run build && node --test tests/*.test.mjs",
 		"dev": "tsup src/index.ts src/react/index.ts --format cjs,esm --dts --sourcemap --watch",
 		"typecheck": "tsc --noEmit",
-		"lint": "eslint src --ext .ts,.tsx"
+		"examples:check": "tsc -p tsconfig.examples.json",
+		"lint": "eslint src",
+		"check": "npm run typecheck && npm run examples:check && npm run lint && npm test"
 	},
 	"peerDependencies": {
 		"react": ">=18.0.0",
@@ -52,10 +56,19 @@
 		}
 	},
 	"devDependencies": {
+		"@eslint/js": "^9.39.5",
 		"@types/react": "^18.3.31",
 		"@types/react-dom": "^18.3.7",
+		"@types/react-test-renderer": "^18.3.1",
+		"eslint": "^9.39.5",
+		"eslint-plugin-react-hooks": "^5.2.0",
+		"globals": "^15.15.0",
+		"react": "^18.3.1",
+		"react-dom": "^18.3.1",
+		"react-test-renderer": "^18.3.1",
 		"tsup": "^8.0.0",
-		"typescript": "^5.9.3"
+		"typescript": "^5.9.3",
+		"typescript-eslint": "^8.65.0"
 	},
 	"license": "MIT"
 }

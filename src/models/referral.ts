@@ -60,6 +60,8 @@ export interface ReferralClickRequest {
 }
 
 export interface AnalyticsEventRequest {
+  schema_version: 2;
+  sdk_event_id: string;
   event_name: string;
   app_user_id?: string;
   code?: string;
@@ -70,4 +72,7 @@ export interface AnalyticsEventRequest {
   platform: "web";
   locale?: string;
   country_code?: string;
+  measurement_mode: import("../core/privacy").GrowthCatMeasurementMode;
+  sdk_version: string;
+  sdk_install_id: string;
 }
