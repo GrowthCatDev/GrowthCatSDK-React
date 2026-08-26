@@ -1,6 +1,6 @@
 {
 	"name": "@growthcat/web",
-	"version": "0.0.5",
+	"version": "0.0.6",
 	"description": "GrowthCat Web SDK — referral codes, ads, sponsorships, attribution, and feedback for React and web apps.",
 	"keywords": [
 		"growthcat",
