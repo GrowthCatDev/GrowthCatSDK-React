@@ -29,7 +29,7 @@ import {
   GrowthCatRewards,
   GrowthCatReward,
 } from "../models/attribution";
-import { SponsorEventBatchRequest, SponsorSlotContent } from "../models/sponsor";
+import { SponsorCreative, SponsorEventBatchRequest, SponsorSlotContent } from "../models/sponsor";
 import {
   FeedbackSubmitRequest,
   FeedbackSubmitResult,
@@ -279,11 +279,30 @@ export class ApiClient {
       `/v1/sponsors/${encodeURIComponent(slotKey)}`
     );
     const creativeRaw = raw["creative"] as Record<string, unknown> | undefined;
+    const mapCreative = (value: Record<string, unknown>): SponsorCreative => ({
+      bookingId: value["booking_id"] as string | undefined,
+      sponsorName: value["sponsor_name"] as string | undefined,
+      logoUrl: value["logo_url"] as string | undefined,
+      headline: value["headline"] as string | undefined,
+      body: value["body"] as string | undefined,
+      ctaText: value["cta_text"] as string | undefined,
+      clickUrl: value["click_url"] as string | undefined,
+      customPayload: value["custom_payload"] as Record<string, unknown> | undefined,
+      periodStart: value["period_start"] as string | undefined,
+      periodEnd: value["period_end"] as string | undefined,
+      trackingToken: value["tracking_token"] as string | undefined,
+    });
+    const creativeList = Array.isArray(raw["creatives"])
+      ? (raw["creatives"] as Record<string, unknown>[]).map(mapCreative)
+      : undefined;
     const periods = Array.isArray(raw["next_available_periods"])
       ? (raw["next_available_periods"] as Record<string, unknown>[]).map((p) => ({
           periodStart: String(p["period_start"] ?? ""),
           periodEnd: String(p["period_end"] ?? ""),
           occupied: p["occupied"] != null ? Boolean(p["occupied"]) : undefined,
+          capacity: p["capacity"] != null ? Number(p["capacity"]) : undefined,
+          bookedCount: p["booked_count"] != null ? Number(p["booked_count"]) : undefined,
+          availableCount: p["available_count"] != null ? Number(p["available_count"]) : undefined,
         }))
       : undefined;
     return {
@@ -291,6 +310,8 @@ export class ApiClient {
       slotKey: String(raw["slot_key"] ?? slotKey),
       format: String(raw["format"] ?? "banner"),
       period: String(raw["period"] ?? "weekly"),
+      deliveryMode: raw["delivery_mode"] === "all" ? "all" : "rotate",
+      capacityPerPeriod: raw["capacity_per_period"] != null ? Number(raw["capacity_per_period"]) : 1,
       creative: creativeRaw
         ? {
             bookingId:
@@ -311,6 +332,7 @@ export class ApiClient {
               ((raw["tracking"] as Record<string, unknown> | undefined)?.["token"] as string | undefined),
           }
         : undefined,
+      creatives: creativeList ?? (creativeRaw ? [mapCreative(creativeRaw)] : undefined),
       priceUsd: raw["price_usd"] != null ? Number(raw["price_usd"]) : undefined,
       bookingUrl: raw["booking_url"] as string | undefined,
       nextAvailablePeriods: periods,

@@ -1,2 +1,1 @@
-export const GROWTHCAT_WEB_SDK_VERSION = "0.0.4";
-
+export const GROWTHCAT_WEB_SDK_VERSION = "0.0.5";

@@ -1,4 +1,5 @@
 export type SponsorSlotStatus = "live" | "available" | "empty";
+export type SponsorDeliveryMode = "rotate" | "all";
 
 export interface SponsorCreative {
   bookingId?: string;
@@ -18,6 +19,9 @@ export interface SponsorPeriod {
   periodStart: string;
   periodEnd: string;
   occupied?: boolean;
+  capacity?: number;
+  bookedCount?: number;
+  availableCount?: number;
 }
 
 /**
@@ -33,6 +37,10 @@ export interface SponsorSlotContent {
   format: string;
   period: string;
   creative?: SponsorCreative;
+  /** Every live creative when deliveryMode is `all`; one selected creative for rotation. */
+  creatives?: SponsorCreative[];
+  deliveryMode?: SponsorDeliveryMode;
+  capacityPerPeriod?: number;
   priceUsd?: number;
   bookingUrl?: string;
   nextAvailablePeriods?: SponsorPeriod[];
@@ -45,6 +53,8 @@ export interface SponsorSlotContent {
  */
 export interface GrowthCatSponsorData extends SponsorSlotContent {
   creativeInstanceId: string;
+  /** Stable render identity for each creative in simultaneous-delivery slots. */
+  creativeInstanceIds: Record<string, string>;
 }
 
 export type SponsorEventName = "impression" | "click";

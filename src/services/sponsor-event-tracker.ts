@@ -4,13 +4,14 @@ import { GrowthCatLogger } from "../core/logger";
 import { MeasurementState } from "../core/privacy";
 import { GROWTHCAT_WEB_SDK_VERSION } from "../core/version";
 import { GrowthCatError } from "../models/errors";
-import { SponsorEventName, SponsorEventPayload, SponsorSlotContent } from "../models/sponsor";
+import { SponsorCreative, SponsorEventName, SponsorEventPayload, SponsorSlotContent } from "../models/sponsor";
 
 export interface SponsorEventOptions {
   creativeInstanceId?: string;
   sessionId?: string;
   visibleFraction?: number;
   visibleDurationMs?: number;
+  creative?: SponsorCreative;
 }
 
 export class SponsorEventTracker {
@@ -45,8 +46,9 @@ export class SponsorEventTracker {
     const creativeInstanceId = options.creativeInstanceId ?? makeCreativeInstanceId();
     const billingKey = `${creativeInstanceId}:${eventName}`;
     if (!this.markBillableInstance(billingKey)) return;
-    const bookingId = sponsor.creative?.bookingId;
-    const trackingToken = sponsor.creative?.trackingToken;
+    const creative = options.creative ?? sponsor.creative;
+    const bookingId = creative?.bookingId;
+    const trackingToken = creative?.trackingToken;
     if (!bookingId || !trackingToken) {
       // The current backend is v1. Send its legacy event without inventing a
       // booking association; v2 will use the durable path below.

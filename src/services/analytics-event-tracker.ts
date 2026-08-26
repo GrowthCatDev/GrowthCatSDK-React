@@ -10,6 +10,7 @@ const MAX_EVENTS = 100;
 const MAX_AGE_MS = 72 * 60 * 60 * 1000;
 
 const PROPERTY_ALLOWLIST: Record<GrowthCatAnalyticsEventName, ReadonlySet<string>> = {
+  session_started: new Set(["session_reason"]),
   paywall_viewed: new Set(["paywall_variant", "offering_id", "placement"]),
   checkout_started: new Set(["product_id", "package_id", "offering_id"]),
   checkout_cancelled: new Set(["product_id", "package_id", "reason"]),

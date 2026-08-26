@@ -227,7 +227,7 @@ await GrowthCat.shared.recordAnalyticsEvent("paywall_viewed", {
 });
 ```
 
-Available event names: `"paywall_viewed"`, `"checkout_started"`, `"checkout_cancelled"`, `"purchase_sdk_completed"`.
+Available event names: `"session_started"`, `"paywall_viewed"`, `"checkout_started"`, `"checkout_cancelled"`, `"purchase_sdk_completed"`. The SDK records `session_started` automatically on initialization and after returning from at least 30 minutes in the background when measurement mode is `analytics`.
 
 ---
 
@@ -600,7 +600,7 @@ function HomePage() {
 }
 ```
 
-`<GrowthCatSponsorBanner>` fetches the current slot, renders a live sponsor or an optional booking placeholder, opens its destination, and automatically tracks qualified impressions and clicks. Pass `showAvailability={false}` if open slots should render nothing.
+`<GrowthCatSponsorBanner>` fetches the current slot, renders a live sponsor or an optional booking placeholder, opens its destination, and automatically tracks qualified impressions and clicks. Slots using `deliveryMode: "all"` render every live sponsor in a responsive grid and attribute events to each creative; `"rotate"` slots render one selected sponsor. Pass `showAvailability={false}` if open slots should render nothing.
 
 ### Custom sponsor design
 
@@ -671,6 +671,10 @@ if (sponsor.status === "live" && sponsor.creative) {
 ```
 
 `sponsor(slotKey)` remains available when you only need the raw slot response and do not need a stable render identity.
+
+For a custom simultaneous layout, iterate `sponsor.creatives` and call
+`trackSponsorCreativeImpression(data, creative, options)` and
+`trackSponsorCreativeClick(data, creative)` for per-sponsor attribution.
 
 ### Sponsor response states
 

@@ -34,7 +34,7 @@ import {
   AttributionResolveResult,
   GrowthCatRewards,
 } from "./models/attribution";
-import { GrowthCatSponsorData, SponsorSlotContent } from "./models/sponsor";
+import { GrowthCatSponsorData, SponsorCreative, SponsorSlotContent } from "./models/sponsor";
 import {
   FeedbackUser,
   FeedbackSubmission,
@@ -48,6 +48,7 @@ import {
 import { GrowthCatError } from "./models/errors";
 
 export class GrowthCatClient {
+  private static readonly SESSION_TIMEOUT_MS = 30 * 60 * 1000;
   private readonly config: GrowthCatConfiguration;
   private readonly api: ApiClient;
   private readonly logger: GrowthCatDebugLogger;
@@ -62,6 +63,8 @@ export class GrowthCatClient {
   private bootstrapCache: GrowthCatSDKBootstrap | null = null;
   private bootstrapPromise: Promise<GrowthCatSDKBootstrap> | null = null;
   private shutdownFlag = false;
+  private hiddenAt: number | null = null;
+  private sessionEventRecorded = false;
 
   constructor(config: GrowthCatConfiguration) {
     this.config = config;
@@ -73,6 +76,7 @@ export class GrowthCatClient {
     this.feedbackService = new FeedbackService(this.api, this.logger);
     this.analyticsEventTracker = new AnalyticsEventTracker(this.api, this.logger, this.measurement);
     this.sponsorEventTracker = new SponsorEventTracker(this.api, this.logger, this.measurement);
+    this.startSessionTracking();
   }
 
   get isConfigured(): boolean {
@@ -101,8 +105,12 @@ export class GrowthCatClient {
 
   setMeasurementMode(mode: GrowthCatMeasurementMode): void {
     this.measurement.setMode(mode);
+    if (mode !== "analytics") this.sessionEventRecorded = false;
     if (mode === "disabled") {
       this.attributionService.clearQueuedEvents();
+    }
+    if (mode === "analytics" && !this.sessionEventRecorded) {
+      this.recordSessionStarted("initial");
     }
   }
 
@@ -319,7 +327,57 @@ export class GrowthCatClient {
    */
   async loadSponsorData(slotKey: string): Promise<GrowthCatSponsorData> {
     const sponsor = await this.sponsor(slotKey);
-    return { ...sponsor, creativeInstanceId: makeCreativeInstanceId() };
+    const creativeInstanceId = makeCreativeInstanceId();
+    return {
+      ...sponsor,
+      creativeInstanceId,
+      creativeInstanceIds: Object.fromEntries(
+        (sponsor.creatives ?? (sponsor.creative ? [sponsor.creative] : []))
+          .filter((creative) => creative.bookingId)
+          .map((creative) => [creative.bookingId!, makeCreativeInstanceId()])
+      ),
+    };
+  }
+
+  private sponsorCreativeInstanceId(data: GrowthCatSponsorData, creative: SponsorCreative): string {
+    return creative.bookingId
+      ? (data.creativeInstanceIds[creative.bookingId] ?? data.creativeInstanceId)
+      : data.creativeInstanceId;
+  }
+
+  /** Track one creative in a simultaneous sponsor placement. */
+  async trackSponsorCreativeImpression(
+    data: GrowthCatSponsorData,
+    creative: SponsorCreative,
+    options: { visibleFraction: number; visibleDurationMs: number; sessionId?: string }
+  ): Promise<boolean> {
+    if (
+      data.status !== "live" || !creative.bookingId || !creative.trackingToken ||
+      options.visibleFraction < 0.5 || options.visibleDurationMs < 1000
+    ) return false;
+    this.sponsorEventTracker.track(data.slotKey, "impression", data, {
+      creative,
+      creativeInstanceId: this.sponsorCreativeInstanceId(data, creative),
+      sessionId: options.sessionId,
+      visibleFraction: Math.max(0, Math.min(1, options.visibleFraction)),
+      visibleDurationMs: Math.max(0, Math.round(options.visibleDurationMs)),
+    });
+    return true;
+  }
+
+  /** Track a click on one creative in a simultaneous sponsor placement. */
+  async trackSponsorCreativeClick(
+    data: GrowthCatSponsorData,
+    creative: SponsorCreative,
+    options?: { sessionId?: string }
+  ): Promise<boolean> {
+    if (data.status !== "live" || !creative.bookingId || !creative.trackingToken) return false;
+    this.sponsorEventTracker.track(data.slotKey, "click", data, {
+      creative,
+      creativeInstanceId: this.sponsorCreativeInstanceId(data, creative),
+      sessionId: options?.sessionId,
+    });
+    return true;
   }
 
   /** Track a qualified sponsor impression. Returns false when not viewable/live. */
@@ -461,6 +519,38 @@ export class GrowthCatClient {
     this.analyticsEventTracker.shutdown();
     this.sponsorEventTracker.shutdown();
     this.attributionService.shutdown();
+    if (typeof document !== "undefined") {
+      document.removeEventListener("visibilitychange", this.onVisibilityChange);
+    }
+  }
+
+  private startSessionTracking(): void {
+    if (typeof document === "undefined") return;
+    document.addEventListener("visibilitychange", this.onVisibilityChange);
+    if (document.visibilityState !== "hidden") this.recordSessionStarted("initial");
+  }
+
+  private readonly onVisibilityChange = (): void => {
+    if (document.visibilityState === "hidden") {
+      this.hiddenAt = Date.now();
+      return;
+    }
+    if (
+      this.hiddenAt !== null &&
+      Date.now() - this.hiddenAt >= GrowthCatClient.SESSION_TIMEOUT_MS
+    ) {
+      this.measurement.rotateSession();
+      this.recordSessionStarted("resumed");
+    }
+    this.hiddenAt = null;
+  };
+
+  private recordSessionStarted(reason: "initial" | "resumed"): void {
+    if (!this.measurement.allowsOptionalAnalytics()) return;
+    this.sessionEventRecorded = true;
+    void this.recordAnalyticsEvent("session_started", {
+      properties: { session_reason: reason },
+    });
   }
 
   private async resolvedBootstrap(): Promise<GrowthCatSDKBootstrap> {

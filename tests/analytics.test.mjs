@@ -93,6 +93,61 @@ test("measurement mode changes immediately", () => {
   GrowthCat.shared.shutdown();
 });
 
+test("analytics mode automatically records the initial SDK session", async () => {
+  const eventTarget = new EventTarget();
+  Object.defineProperty(eventTarget, "visibilityState", {
+    configurable: true,
+    value: "visible",
+  });
+  const previousDocument = globalThis.document;
+  const previousNavigator = globalThis.navigator;
+  globalThis.document = eventTarget;
+  Object.defineProperty(globalThis, "navigator", {
+    configurable: true,
+    value: { language: "en-US" },
+  });
+  const analyticsEvents = [];
+  globalThis.fetch = async (url, init = {}) => {
+    const pathname = new URL(String(url)).pathname;
+    if (pathname === "/v1/sdk/config") {
+      return new Response(JSON.stringify(bootstrapResponse()), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    if (pathname === "/v1/analytics/events") {
+      analyticsEvents.push(JSON.parse(String(init.body)));
+      return new Response(JSON.stringify({ accepted: true }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    throw new Error(`Unexpected request: ${pathname}`);
+  };
+
+  try {
+    GrowthCat.initialize({
+      apiKey: "gc_test_session",
+      baseUrl: "https://example.test",
+      measurementMode: "analytics",
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(analyticsEvents.length, 1);
+    assert.equal(analyticsEvents[0].event_name, "session_started");
+    assert.equal(analyticsEvents[0].properties.session_reason, "initial");
+    assert.ok(analyticsEvents[0].session_id);
+    assert.ok(analyticsEvents[0].sdk_install_id);
+  } finally {
+    GrowthCat.shutdown();
+    if (previousDocument === undefined) delete globalThis.document;
+    else globalThis.document = previousDocument;
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      value: previousNavigator,
+    });
+  }
+});
+
 test("custom sponsor data keeps one render identity and qualifies impressions", async () => {
   const eventNames = [];
   globalThis.fetch = async (url, init = {}) => {
@@ -158,5 +213,52 @@ test("custom sponsor data keeps one render identity and qualifies impressions", 
   await GrowthCat.shared.flushSponsorEvents();
 
   assert.deepEqual(eventNames.sort(), ["click", "impression"]);
+  GrowthCat.shared.shutdown();
+});
+
+test("simultaneous sponsor data tracks each visible creative independently", async () => {
+  const events = [];
+  globalThis.fetch = async (url, init = {}) => {
+    const pathname = new URL(String(url)).pathname;
+    if (pathname === "/v1/sdk/config") {
+      const bootstrap = bootstrapResponse();
+      bootstrap.ads.measurement_schema_version = 2;
+      return new Response(JSON.stringify(bootstrap), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    if (pathname === "/v1/sponsors/silver") {
+      return new Response(JSON.stringify({
+        status: "live",
+        slot_key: "silver",
+        format: "banner",
+        period: "monthly",
+        capacity_per_period: 5,
+        delivery_mode: "all",
+        creative: { booking_id: "booking-1", tracking_token: "token-1", sponsor_name: "One" },
+        creatives: [
+          { booking_id: "booking-1", tracking_token: "token-1", sponsor_name: "One" },
+          { booking_id: "booking-2", tracking_token: "token-2", sponsor_name: "Two" },
+        ],
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    if (pathname === "/v1/sponsors/events/batch") {
+      const body = JSON.parse(String(init.body));
+      events.push(...body.events);
+      return new Response(JSON.stringify({ accepted: body.events.length }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    throw new Error(`Unexpected request: ${pathname}`);
+  };
+
+  GrowthCat.initialize({ apiKey: "gc_test_sponsor_all", baseUrl: "https://example.test", measurementMode: "essential" });
+  await GrowthCat.shared.refreshSDKBootstrap();
+  const sponsor = await GrowthCat.shared.loadSponsorData("silver");
+  assert.equal(sponsor.deliveryMode, "all");
+  assert.equal(sponsor.creatives.length, 2);
+  await Promise.all(sponsor.creatives.map((creative) =>
+    GrowthCat.shared.trackSponsorCreativeImpression(sponsor, creative, { visibleFraction: 1, visibleDurationMs: 1000 })
+  ));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await GrowthCat.shared.flushSponsorEvents();
+  assert.deepEqual(events.map((event) => event.booking_id).sort(), ["booking-1", "booking-2"]);
+  assert.equal(new Set(events.map((event) => event.creative_instance_id)).size, 2);
   GrowthCat.shared.shutdown();
 });

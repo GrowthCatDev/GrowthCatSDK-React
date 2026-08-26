@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { GrowthCat } from "../../growthcat";
 import { GrowthCatError } from "../../models/errors";
-import { GrowthCatSponsorData } from "../../models/sponsor";
+import { GrowthCatSponsorData, SponsorCreative } from "../../models/sponsor";
 
 export type SponsorLoadState = "idle" | "loading" | "ready" | "error";
 
@@ -17,7 +17,7 @@ export interface UseSponsorResult {
   state: SponsorLoadState;
   error: GrowthCatError | null;
   trackImpression: (visibleFraction: number, visibleDurationMs: number) => Promise<boolean>;
-  trackClick: () => Promise<boolean>;
+  trackClick: (creative?: SponsorCreative) => Promise<boolean>;
   reload: () => Promise<void>;
 }
 
@@ -70,6 +70,16 @@ export function useSponsor(options: UseSponsorOptions): UseSponsorResult {
   const trackImpression = useCallback(
     async (visibleFraction: number, visibleDurationMs: number) => {
       if (!sponsor) return false;
+      if (sponsor.deliveryMode === "all" && sponsor.creatives?.length) {
+        const results = await Promise.all(sponsor.creatives.map((creative) =>
+          GrowthCat.shared.trackSponsorCreativeImpression(sponsor, creative, {
+            visibleFraction,
+            visibleDurationMs,
+            sessionId: optionsRef.current.sessionId,
+          })
+        ));
+        return results.some(Boolean);
+      }
       return GrowthCat.shared.trackSponsorImpression(sponsor, {
         visibleFraction,
         visibleDurationMs,
@@ -79,8 +89,13 @@ export function useSponsor(options: UseSponsorOptions): UseSponsorResult {
     [sponsor]
   );
 
-  const trackClick = useCallback(async () => {
+  const trackClick = useCallback(async (creative?: SponsorCreative) => {
     if (!sponsor) return false;
+    if (creative) {
+      return GrowthCat.shared.trackSponsorCreativeClick(sponsor, creative, {
+        sessionId: optionsRef.current.sessionId,
+      });
+    }
     return GrowthCat.shared.trackSponsorClick(sponsor, {
       sessionId: optionsRef.current.sessionId,
     });

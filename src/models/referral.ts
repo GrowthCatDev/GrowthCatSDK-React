@@ -3,6 +3,7 @@
 export type GrowthCatAnalyticsValue = string | number | boolean;
 
 export type GrowthCatAnalyticsEventName =
+  | "session_started"
   | "paywall_viewed"
   | "checkout_started"
   | "checkout_cancelled"

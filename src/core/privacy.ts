@@ -39,6 +39,10 @@ export class MeasurementState {
     for (const listener of this.listeners) listener(mode, previousMode);
   }
 
+  rotateSession(): void {
+    this.analyticsSessionId = makeSessionId();
+  }
+
   subscribe(listener: MeasurementListener): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
@@ -52,4 +56,3 @@ export class MeasurementState {
     return this.mode !== "disabled";
   }
 }
-
