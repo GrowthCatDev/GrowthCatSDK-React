@@ -3,6 +3,7 @@ import { ApiClient } from "./core/api";
 import { GrowthCatDebugLogger } from "./core/logger";
 import { AdService } from "./services/ad-service";
 import { AttributionService } from "./services/attribution-service";
+import { AcquisitionService } from "./services/acquisition-service";
 import { FeedbackService } from "./services/feedback-service";
 import { AnalyticsEventTracker, sanitizeAnalyticsProperties } from "./services/analytics-event-tracker";
 import { SponsorEventOptions, SponsorEventTracker } from "./services/sponsor-event-tracker";
@@ -35,6 +36,7 @@ import {
   AttributionResolveResult,
   GrowthCatRewards,
 } from "./models/attribution";
+import type { AcquisitionCampaign } from "./models/acquisition";
 import { GrowthCatSponsorData, SponsorCreative, SponsorSlotContent } from "./models/sponsor";
 import {
   FeedbackUser,
@@ -57,6 +59,7 @@ export class GrowthCatClient {
   private readonly logger: GrowthCatDebugLogger;
   readonly adService: AdService;
   readonly attributionService: AttributionService;
+  readonly acquisitionService: AcquisitionService;
   readonly feedbackService: FeedbackService;
   private readonly measurement: MeasurementState;
   private readonly analyticsEventTracker: AnalyticsEventTracker;
@@ -81,6 +84,7 @@ export class GrowthCatClient {
     });
     this.adService = new AdService(this.api, this.logger, this.measurement);
     this.attributionService = new AttributionService(this.api, this.logger, this.measurement);
+    this.acquisitionService = new AcquisitionService(this.api);
     this.feedbackService = new FeedbackService(this.api, this.logger);
     this.analyticsEventTracker = new AnalyticsEventTracker(this.api, this.logger, this.measurement);
     this.sponsorEventTracker = new SponsorEventTracker(this.api, this.logger, this.measurement);
@@ -297,6 +301,10 @@ export class GrowthCatClient {
     this.adService.eventTracker.clearOptionalEvents();
     this.measurement.rotateSession();
     this.attributionService.clearAppUserId();
+  }
+
+  async acquisition(options: { slug: string; sessionId?: string }): Promise<AcquisitionCampaign> {
+    return this.acquisitionService.load(options);
   }
 
   async generateShareLink(options: {
