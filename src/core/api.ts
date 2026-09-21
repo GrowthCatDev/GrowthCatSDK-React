@@ -33,6 +33,11 @@ import {
 } from "../models/attribution";
 import { SponsorCreative, SponsorEventBatchRequest, SponsorSlotContent } from "../models/sponsor";
 import {
+  AcquisitionCampaignConfig,
+  AcquisitionEventPayload,
+  parseAcquisitionCampaign,
+} from "../models/acquisition";
+import {
   FeedbackSubmitRequest,
   FeedbackSubmitResult,
   FeedbackVoteResult,
@@ -272,6 +277,22 @@ export class ApiClient {
 
   async trackAttributionEvent(body: AttributionEventRequest): Promise<void> {
     await this.request("POST", "/v1/events", body);
+  }
+
+  async fetchAcquisitionCampaign(slug: string): Promise<AcquisitionCampaignConfig> {
+    const raw = await this.request<Record<string, unknown>>(
+      "GET",
+      `/v1/public/acquisition/${encodeURIComponent(slug)}`
+    );
+    return parseAcquisitionCampaign(raw);
+  }
+
+  async trackAcquisitionEvent(slug: string, body: AcquisitionEventPayload): Promise<void> {
+    await this.request(
+      "POST",
+      `/v1/public/acquisition/${encodeURIComponent(slug)}/events`,
+      body
+    );
   }
 
   async fetchRewards(appUserId: string): Promise<GrowthCatRewards> {
