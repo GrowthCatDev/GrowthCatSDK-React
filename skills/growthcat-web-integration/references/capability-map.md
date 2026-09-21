@@ -61,6 +61,16 @@ against the installed package declarations.
   `recordAnalyticsEvent`
 - Unlock access only from successful validation, not from the submitted string.
 
+### Acquisition landings
+
+- React: `useAcquisitionCampaign(slug)`.
+- Headless: `GrowthCat.acquisition({ slug })` or `GrowthCat.shared.acquisition({ slug })`.
+- Render campaign-localized content from the returned config.
+- Use `trackLandingView()` once when the campaign page is shown.
+- Use `openAppStore()` for the App Store CTA; it tracks the click and navigates to the backend-provided Apple URL.
+- Never construct `campaign_key`, Apple `ct`, provider token, or Custom Product Page URL in the host.
+- The ad-platform campaign name is not the join key; the GrowthCat campaign slug/key is authoritative.
+
 ### Attribution
 
 - On link-receiving pages, initialize, set the known app user ID, then use

@@ -1,4 +1,10 @@
 // ─── Hooks ────────────────────────────────────────────────────────────────────
+export { useAcquisitionCampaign } from "./hooks/useAcquisitionCampaign";
+export type {
+  UseAcquisitionCampaignOptions,
+  UseAcquisitionCampaignResult,
+} from "./hooks/useAcquisitionCampaign";
+
 export { useAd } from "./hooks/useAd";
 export type { UseAdOptions, UseAdResult, AdLoadState } from "./hooks/useAd";
 
