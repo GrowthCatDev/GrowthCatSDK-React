@@ -95,6 +95,11 @@ export const GrowthCat = {
     GrowthCat.shared.clearAppUserId();
   },
 
+  /** Loads a GrowthCat-managed acquisition landing campaign. */
+  acquisition(options: { slug: string; sessionId?: string }) {
+    return GrowthCat.shared.acquisition(options);
+  },
+
   /** Applies a host-app consent change immediately. */
   setMeasurementMode(mode: GrowthCatMeasurementMode): void {
     GrowthCat.shared.setMeasurementMode(mode);
