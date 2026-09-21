@@ -44,6 +44,13 @@ export type {
   AdEventTrackingOptions,
 } from "./models/ads";
 
+export { parseAcquisitionCampaign } from "./models/acquisition";
+export type {
+  AcquisitionCampaign,
+  AcquisitionCampaignConfig,
+  AcquisitionEventPayload,
+} from "./models/acquisition";
+
 export type {
   AttributionMatchType,
   AttributionLink,
