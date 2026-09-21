@@ -794,6 +794,48 @@ GrowthCat.clearAppUserId();
 
 ---
 
+## Acquisition landing pages
+
+GrowthCat can power localized paid-acquisition landings while keeping one canonical campaign identity across the landing, Apple Campaign Links, the installed app, and RevenueCat.
+
+Initialize normally, then load the campaign by the slug generated in the GrowthCat dashboard:
+
+```ts
+GrowthCat.initialize({ apiKey: "gc_live_your_key", workspace: "live" });
+
+const campaign = await GrowthCat.acquisition({
+  slug: "de-padel-meta-video-01",
+});
+
+await campaign.trackLandingView();
+
+// Use this from your App Store CTA. Tracking is best-effort; navigation still happens.
+await campaign.openAppStore();
+```
+
+React apps can use the hook:
+
+```tsx
+import { useAcquisitionCampaign } from "@growthcat/web/react";
+
+const { campaign, isLoading, error, openAppStore } = useAcquisitionCampaign(
+  "de-padel-meta-video-01"
+);
+
+if (isLoading) return null;
+if (error || !campaign) return <GenericDownloadFallback />;
+
+return (
+  <>
+    <h1>{campaign.headline}</h1>
+    <button onClick={() => void openAppStore()}>{campaign.ctaText}</button>
+  </>
+);
+```
+
+The SDK does not generate Apple campaign tokens. GrowthCat Backend returns the authoritative `appleUrl`, already containing the canonical `ct` value and optional provider/custom-product-page parameters. Meta campaign names do not need to match GrowthCat; use the GrowthCat-generated landing URL as the ad destination.
+
+
 ## Feedback
 
 ```ts
