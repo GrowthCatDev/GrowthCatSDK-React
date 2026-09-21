@@ -1,3 +1,4 @@
+import { webUrl } from "../core/url";
 // ─── Format ───────────────────────────────────────────────────────────────────
 import { GrowthCatError } from "./errors";
 
@@ -207,7 +208,7 @@ export interface AdEventMetadata {
   visible_fraction?: number;
   visible_duration_ms?: number;
   player_position_ms?: number;
-  quartile?: 0 | 25 | 50 | 75 | 100;
+  quartile?: 25 | 50 | 75 | 100;
 }
 
 export interface AdEventTrackingOptions {
@@ -228,6 +229,8 @@ export interface AdReward {
 }
 
 export interface AdRewardValidationResponse {
+  grantId?: string;
+  alreadyGranted?: boolean;
   rewardValidated: boolean;
   accepted: number;
   reward?: AdReward;
@@ -305,12 +308,7 @@ export function parseAdObject(raw: RawAdObject): AdObject {
 
   const layout = layoutRaw ? parseAdCreativeLayout(layoutRaw) : undefined;
 
-  let destinationUrl: string | undefined;
-  if (raw.creative.destination_url) {
-    const url = raw.creative.destination_url;
-    destinationUrl =
-      url.startsWith("http://") || url.startsWith("https://") ? url : `https://${url}`;
-  }
+  const destinationUrl = webUrl(raw.creative.destination_url);
 
   return {
     placement: raw.placement
@@ -334,7 +332,7 @@ export function parseAdObject(raw: RawAdObject): AdObject {
     creative: {
       id: raw.creative.id,
       creativeType: raw.creative.creative_type,
-      publicAssetUrl: raw.creative.public_asset_url,
+      publicAssetUrl: webUrl(raw.creative.public_asset_url),
       layout,
       assetCache: raw.creative.asset_cache
         ? { cacheable: raw.creative.asset_cache.cacheable, ttlSeconds: raw.creative.asset_cache.ttl_seconds }

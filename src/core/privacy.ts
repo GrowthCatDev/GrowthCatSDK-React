@@ -13,8 +13,20 @@ export class MeasurementState {
   private analyticsSessionId = makeSessionId();
   private readonly listeners = new Set<MeasurementListener>();
 
-  constructor(initialMode: GrowthCatMeasurementMode) {
+  constructor(initialMode: GrowthCatMeasurementMode, private readonly storageKey?: string) {
     this.mode = initialMode;
+    if (storageKey && typeof window !== "undefined") window.addEventListener("storage", this.onStorage);
+  }
+
+  private readonly onStorage = (event: StorageEvent): void => {
+    if (event.key !== this.storageKey || !event.newValue) return;
+    // Revocation propagates across tabs; consent must always be granted explicitly by the host.
+    if (event.newValue === "disabled" || (event.newValue === "essential" && this.mode === "analytics")) this.setMode(event.newValue);
+  };
+
+  shutdown(): void {
+    if (typeof window !== "undefined") window.removeEventListener("storage", this.onStorage);
+    this.listeners.clear();
   }
 
   get measurementMode(): GrowthCatMeasurementMode {
@@ -26,9 +38,13 @@ export class MeasurementState {
   }
 
   setMode(mode: GrowthCatMeasurementMode): void {
+    if (!["essential", "analytics", "disabled"].includes(mode)) throw new TypeError("Invalid measurement mode.");
     if (mode === this.mode) return;
     const previousMode = this.mode;
     this.mode = mode;
+    if (this.storageKey) {
+      try { localStorage.setItem(this.storageKey, mode); } catch { /* storage unavailable */ }
+    }
 
     // Moving away from analytics invalidates the prior optional-measurement
     // session so it cannot be correlated if analytics is enabled again later.

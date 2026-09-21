@@ -71,7 +71,7 @@ test("one creative instance emits at most one billable impression", async () => 
     creative: { id: "00000000-0000-4000-8000-000000000003", creativeType: "image", destinationType: "none" },
     tracking: { token: "signed-token" },
   };
-  const options = { format: "banner", creativeInstanceId: "render-1" };
+  const options = { format: "banner", creativeInstanceId: "render-1", metadata: { visible_fraction: 1, visible_duration_ms: 1000 } };
   GrowthCat.shared.trackAdEvent("impression", ad, options);
   GrowthCat.shared.trackAdEvent("impression", ad, options);
   await GrowthCat.shared.flushAdEvents();

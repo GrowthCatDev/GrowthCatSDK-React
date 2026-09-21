@@ -4,6 +4,20 @@ export type GrowthCatEnvironmentMode = "automatic" | "production";
 
 export type GrowthCatWorkspace = "sandbox" | "live";
 
+export interface GrowthCatIdentityRequest {
+  appUserId: string;
+  scope: "user" | "event";
+  eventName?: string;
+  eventId?: string;
+  forceRefresh: boolean;
+}
+
+export interface GrowthCatDeliveryStatus {
+  eventId: string;
+  state: "queued" | "delivered" | "rejected";
+  statusCode?: number;
+}
+
 export interface GrowthCatConfiguration {
   apiKey: string;
   baseUrl: string;
@@ -12,6 +26,8 @@ export interface GrowthCatConfiguration {
   logsEnabled: boolean;
   measurementMode: GrowthCatMeasurementMode;
   requestTimeoutMs: number;
+  identityTokenProvider?: (request: GrowthCatIdentityRequest) => Promise<string>;
+  onDeliveryStatus?: (status: GrowthCatDeliveryStatus) => void;
 }
 
 export interface GrowthCatInitOptions {
@@ -29,6 +45,10 @@ export interface GrowthCatInitOptions {
   measurementMode?: GrowthCatMeasurementMode;
   /** Maximum duration for one HTTP request. Defaults to 15 seconds. */
   requestTimeoutMs?: number;
+  /** Fetch a short-lived signed token from your authenticated application server. */
+  identityTokenProvider?: GrowthCatConfiguration["identityTokenProvider"];
+  /** Receives delivery state without event properties or personal data. */
+  onDeliveryStatus?: GrowthCatConfiguration["onDeliveryStatus"];
 }
 
 const PRODUCTION_BASE_URL = "https://api.growthcat.dev";
@@ -59,6 +79,15 @@ export function buildConfiguration(options: GrowthCatInitOptions): GrowthCatConf
   if (parsedBaseUrl.protocol !== "https:" && parsedBaseUrl.protocol !== "http:") {
     throw new TypeError("[GrowthCat] baseUrl must use http or https.");
   }
+  if (parsedBaseUrl.username || parsedBaseUrl.password || parsedBaseUrl.search || parsedBaseUrl.hash) {
+    throw new TypeError("[GrowthCat] baseUrl cannot contain credentials, a query, or a fragment.");
+  }
+  if (parsedBaseUrl.protocol === "http:" && !["localhost", "127.0.0.1", "[::1]"].includes(parsedBaseUrl.hostname)) {
+    throw new TypeError("[GrowthCat] remote baseUrl must use HTTPS.");
+  }
+  if (options.measurementMode && !["essential", "analytics", "disabled"].includes(options.measurementMode)) {
+    throw new TypeError("[GrowthCat] invalid measurementMode.");
+  }
 
   const requestTimeoutMs = options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
   if (!Number.isFinite(requestTimeoutMs) || requestTimeoutMs <= 0) {
@@ -74,5 +103,7 @@ export function buildConfiguration(options: GrowthCatInitOptions): GrowthCatConf
     logsEnabled: options.logsEnabled ?? false,
     measurementMode: options.measurementMode ?? "essential",
     requestTimeoutMs,
+    identityTokenProvider: options.identityTokenProvider,
+    onDeliveryStatus: options.onDeliveryStatus,
   };
 }

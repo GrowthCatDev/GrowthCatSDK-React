@@ -1,4 +1,5 @@
-import React, { useState } from "react";
+import React, { useState, useEffect, useId } from "react";
+import { GrowthCat } from "../../growthcat";
 import { useReferral } from "../hooks/useReferral";
 import { GrowthCatAnalyticsContext, ReferralRedemptionResult } from "../../models/referral";
 
@@ -72,6 +73,18 @@ export function GrowthCatReferralForm({
   const t = { ...DEFAULT_THEME, ...customTheme };
 
   const [code, setCode] = useState("");
+  const inputId = useId();
+  const [visible, setVisible] = useState(false);
+  useEffect(() => {
+    let active = true;
+    let unsubscribe: (() => void) | undefined;
+    void GrowthCat.ready().then(client => {
+      if (!active) return;
+      setVisible(client.sdkConfig?.showCodeRedeemUI === true);
+      unsubscribe = client.subscribeSDKConfig(config => setVisible(config.showCodeRedeemUI));
+    }).catch(() => {});
+    return () => { active = false; unsubscribe?.(); };
+  }, []);
   const { isLoading, result, error, validateCode } = useReferral({
     context,
     onSuccess,
@@ -82,6 +95,8 @@ export function GrowthCatReferralForm({
     e.preventDefault();
     if (code.trim()) void validateCode(code);
   };
+
+  if (!visible) return null;
 
   return (
     <div
@@ -120,6 +135,10 @@ export function GrowthCatReferralForm({
       ) : (
         <form onSubmit={handleSubmit} style={{ display: "flex", gap: 8 }}>
           <input
+            id={inputId}
+            aria-label={s.placeholder || "Referral code"}
+            aria-invalid={!!error}
+            maxLength={128}
             type="text"
             value={code}
             onChange={(e) => setCode(e.target.value)}

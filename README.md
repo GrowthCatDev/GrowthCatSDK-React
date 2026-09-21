@@ -89,6 +89,48 @@ Use $growthcat-web-integration to add a feedback board to my settings page.
 
 ## Initialization
 
+### Verified user identity
+
+Attribution, rewards, and identified feedback require a short-lived identity
+token from your application's authenticated server. The SDK key is public and
+does not authenticate an end user. Configure the provider during initialization:
+
+```ts
+GrowthCat.initialize({
+  apiKey: "gc_live_your_key_here",
+  workspace: "live",
+  identityTokenProvider: async (request) => {
+    const response = await fetch("/api/growthcat/identity", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(request),
+    });
+    if (!response.ok) throw new Error("Unable to authorize GrowthCat operation");
+    const { token } = await response.json();
+    return token;
+  },
+  onDeliveryStatus: ({ eventId, state, statusCode }) => {
+    // Optional host diagnostics; no event properties or personal data are included.
+    if (state === "rejected") console.error("GrowthCat delivery rejected", eventId, statusCode);
+  },
+});
+GrowthCat.setAppUserId(currentUser.id);
+```
+
+`/api/growthcat/identity` is an endpoint you implement on your own server. It must
+derive the user from the authenticated session, check that `appUserId` matches,
+and authorize the requested operation. Do not blindly sign caller-provided
+events. Tokens use HS256 with your server-only GrowthCat identity secret and
+claims `sub` (user), `aud` (GrowthCat app ID), `iat`, `exp` (maximum five minutes),
+and `scope` (`user` or `event`). Event tokens additionally bind `event_name` and
+`jti` to `request.eventName` and `request.eventId`. Reward validation uses
+`eventName: "ad_reward"`. Never put the signing secret in a browser bundle.
+
+The provider is called per request and once more with `forceRefresh: true` on
+401. Preserve the event ID when refreshing a token for the same operation.
+Referral validation also requires `setAppUserId()` before submitting a code.
+Anonymous feedback continues to work without a token provider.
+
 Call `GrowthCat.initialize()` **once**, as early as possible — ideally in your root `App` component or `main.tsx`.
 
 ```ts
@@ -135,7 +177,18 @@ GrowthCat.setMeasurementMode("analytics");
 GrowthCat.setMeasurementMode("essential");
 ```
 
-`essential` keeps aggregate ad delivery, reward validation, fraud prevention, and operational measurement, but omits the app user ID from ordinary ad events. `disabled` does not enqueue measurement events.
+`essential` keeps aggregate ad delivery, reward validation, fraud prevention, and operational measurement, but omits app user IDs and session IDs from ordinary ad events. `disabled` does not enqueue measurement events. Revocation removes pending disallowed events and cancels in-flight measurement where possible; requests already accepted by a server cannot be recalled. Revocation is propagated to other tabs of the same project/workspace, but granting consent remains the host's responsibility.
+
+Queues retain events for at most 72 hours, use per-event storage keys and stable
+IDs, and fall back to memory when storage is unavailable. Browser Web Locks
+coordinate queue drains when available; server deduplication remains required.
+`await GrowthCat.shared.flushEvents()` waits for the current delivery attempt
+across analytics, ads, sponsors, and qualifying events. Retryable failures stay
+queued; observe `onDeliveryStatus` for queued, delivered, and permanently rejected
+events. A successful recording call is not a proof of server ingestion.
+
+Browser locale is sent as locale only, never as geographic country. Storage and
+installation identity are isolated by SDK key, base URL, and workspace.
 
 ### Handle attribution on page load
 
@@ -286,7 +339,7 @@ function HomePage() {
 }
 ```
 
-`<GrowthCatAdBanner>` fires an `impression` event automatically once 50%+ of the banner is in the viewport.
+`<GrowthCatAdBanner>` fires an `impression` event after the loaded creative remains at least 50% visible for one continuous second while the page is visible.
 
 You can also use the **format-based** initializer:
 
@@ -415,7 +468,15 @@ function MyCustomBanner({ placementKey }: { placementKey: string }) {
 | `trackEvent` | `(name, metadata?) => void` | Fire a tracking event for this ad. |
 | `reload` | `() => void` | Reload the ad (e.g. after dismissal). |
 
-Custom banner renderers must call `trackEvent("impression", { visible_fraction, visible_duration_ms })` only after the creative remains at least 50% visible for one continuous second. The built-in banner and interstitial components implement this automatically and pause timing while the page is hidden.
+Custom banner renderers must call `trackEvent("impression", { visible_fraction, visible_duration_ms })` only after the loaded creative remains at least 50% visible for one continuous second. The built-in banner and interstitial components implement this automatically and pause timing while the page is hidden. Simultaneous sponsor layouts measure each tile independently; custom layouts pass the specific creative to `useSponsor().trackImpression(fraction, duration, creative)`.
+
+Signed ad delivery tokens authorize one presentation, so the SDK fetches a fresh
+delivery for a new render instead of reusing a cached token. Legacy stale
+non-rewarded ads expire after at most five minutes beyond their cache TTL.
+Headless reward validation must pass the same `creativeInstanceId` used for the
+qualified impression. The built-in interstitial supplies it automatically and
+only invokes `onReward` for a newly accepted grant. Valuable entitlements should
+be fulfilled on the server using the stable `grantId`, not a browser callback.
 
 ### The `AdObject` shape
 
@@ -542,13 +603,15 @@ Available event names: `"impression"`, `"click"`, `"video_start"`, `"video_progr
 
 ```ts
 const response = await GrowthCat.shared.validateAdReward(ad, "user_123", {
+  creativeInstanceId,
   sessionId,
   viewedSeconds: 30,
   completed: true,
 });
 
-if (response.rewardValidated) {
-  grantCoins(response.reward?.amount ?? 0);
+if (response.rewardValidated && !response.alreadyGranted) {
+  // Refresh the balance from your server; do not trust client-side grants.
+  await refreshBalance();
 }
 // Never grant the reward if rewardValidated is false or the call throws.
 ```
@@ -777,6 +840,12 @@ const result = await GrowthCat.shared.submitFeedback({
 // Fetch the public board.
 const items = await GrowthCat.shared.fetchFeedbackBoard("idea");
 
+// Fetch additional pages without losing the server cursor.
+const firstPage = await GrowthCat.shared.fetchFeedbackPage({ type: "idea", limit: 50 });
+const nextPage = firstPage.nextCursor
+  ? await GrowthCat.shared.fetchFeedbackPage({ type: "idea", cursor: firstPage.nextCursor })
+  : null;
+
 // Vote and unvote.
 await GrowthCat.shared.voteFeedbackItem(items[0].itemId);
 await GrowthCat.shared.unvoteFeedbackItem(items[0].itemId);
@@ -784,6 +853,12 @@ await GrowthCat.shared.unvoteFeedbackItem(items[0].itemId);
 // Sign out.
 GrowthCat.shared.clearFeedbackUser();
 ```
+
+`fetchFeedbackBoard` returns the first page for backward compatibility. The
+built-in board and `useFeedbackBoard` expose `hasMore`, `isLoadingMore`, and
+`loadMore()` for subsequent pages. `rewardsProgress()` exposes referral reward
+progress, and `rewards()` preserves grant IDs, timestamps, metadata, and offer-code
+fulfillment fields returned by the backend.
 
 ### Built-in feedback board component
 
@@ -1004,6 +1079,7 @@ client.validateAdReward(
   ad: AdObject,
   appUserId: string,
   options?: {
+    creativeInstanceId?: string; // Required for a valid reward request.
     sessionId?: string;
     viewedSeconds?: number;
     completed?: boolean;

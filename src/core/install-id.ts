@@ -23,36 +23,37 @@ function stableScope(value: string): string {
   return (hash >>> 0).toString(36);
 }
 
-export function configureIdentityScope(apiKey: string, baseUrl: string): void {
-  identityScope = stableScope(`${baseUrl}|${apiKey}`);
+export function makeIdentityScope(apiKey: string, baseUrl: string, workspace: string): string {
+  return stableScope(`${baseUrl}|${apiKey}|${workspace}`);
+}
+
+export function configureIdentityScope(apiKey: string, baseUrl: string, workspace = "sandbox"): void {
+  identityScope = makeIdentityScope(apiKey, baseUrl, workspace);
 }
 
 /** Builds a versioned browser-storage key isolated to the active GrowthCat project. */
-export function scopedStorageKey(name: string, version: number): string {
-  return `${name}:v${version}:${identityScope}`;
+export function scopedStorageKey(name: string, version: number, scope = identityScope): string {
+  return `${name}:v${version}:${scope}`;
 }
 
-function storageKey(): string {
-  return scopedStorageKey(STORAGE_KEY_PREFIX, 2);
-}
-
-export function installId(): string {
-  const cached = cachedInstallIds.get(identityScope);
+export function installId(scope = identityScope): string {
+  const cached = cachedInstallIds.get(scope);
   if (cached) return cached;
 
   try {
-    const stored = localStorage.getItem(storageKey());
-    if (stored) {
-      cachedInstallIds.set(identityScope, stored);
+    const key = scopedStorageKey(STORAGE_KEY_PREFIX, 2, scope);
+    const stored = localStorage.getItem(key);
+    if (stored && /^[a-f0-9-]{36}$/i.test(stored)) {
+      cachedInstallIds.set(scope, stored);
       return stored;
     }
     const id = generateId();
-    localStorage.setItem(storageKey(), id);
-    cachedInstallIds.set(identityScope, id);
+    localStorage.setItem(key, id);
+    cachedInstallIds.set(scope, id);
     return id;
   } catch {
     const id = generateId();
-    cachedInstallIds.set(identityScope, id);
+    cachedInstallIds.set(scope, id);
     return id;
   }
 }

@@ -1,4 +1,6 @@
 export type FeedbackType = "idea" | "bug" | "feedback" | "question";
+export interface FeedbackPageOptions { type?: FeedbackType; cursor?: string; limit?: number; }
+export interface FeedbackPage { items: FeedbackBoardItem[]; nextCursor: string | null; }
 import { GrowthCatError } from "./errors";
 
 export type FeedbackItemStatus =

@@ -1,6 +1,6 @@
 import { ApiClient } from "../core/api";
 import { GrowthCatLogger } from "../core/logger";
-import { installId, makeAdEventId } from "../core/install-id";
+import { makeAdEventId } from "../core/install-id";
 import { MeasurementState } from "../core/privacy";
 import { AdEventTracker } from "./ad-event-tracker";
 import {
@@ -26,12 +26,7 @@ function currentLocale(): string | undefined {
 }
 
 function currentCountryCode(): string | undefined {
-  try {
-    const locale = new Intl.Locale(navigator.language);
-    return (locale as unknown as { region?: string }).region ?? undefined;
-  } catch {
-    return undefined;
-  }
+  return undefined;
 }
 
 export class AdService {
@@ -43,6 +38,7 @@ export class AdService {
   private staleCache = new Map<string, CacheEntry>();
   private inFlight = new Map<string, Promise<AdObject | null>>();
   private cacheTtlSeconds = 300;
+  private readonly rewardIds = new WeakMap<AdObject, Map<string, string>>();
 
   constructor(
     api: ApiClient,
@@ -75,7 +71,10 @@ export class AdService {
       return cached;
     }
     const pending = this.inFlight.get(normalizedKey);
-    if (pending) return pending;
+    if (pending) {
+      const ad = await pending;
+      return ad?.tracking.token.split(":").length === 6 ? this.loadAdByPlacementKey(normalizedKey) : ad;
+    }
 
     const request = (async () => {
       try {
@@ -113,7 +112,10 @@ export class AdService {
       return cached;
     }
     const pending = this.inFlight.get(cacheKey);
-    if (pending) return pending;
+    if (pending) {
+      const ad = await pending;
+      return ad?.tracking.token.split(":").length === 6 ? this.loadAdByFormat(format) : ad;
+    }
 
     const request = (async () => {
       try {
@@ -161,21 +163,32 @@ export class AdService {
     appUserId: string,
     sessionId: string | undefined,
     viewedSeconds: number,
-    completed: boolean
+    completed: boolean,
+    creativeInstanceId?: string
   ): Promise<AdRewardValidationResponse> {
     if (!ad.placement) {
       throw GrowthCatError.unknown(
         "Reward validation requires a placement (placement key only)."
       );
     }
+    if (!appUserId.trim()) throw GrowthCatError.missingAppUserId();
+    if (!creativeInstanceId) throw GrowthCatError.unknown("Reward validation requires the rendered creativeInstanceId.");
+    if (!Number.isFinite(viewedSeconds) || viewedSeconds < 0 || viewedSeconds > 3600) throw GrowthCatError.unknown("Invalid viewedSeconds.");
+    let ids = this.rewardIds.get(ad);
+    if (!ids) { ids = new Map(); this.rewardIds.set(ad, ids); }
+    const key = `${appUserId}:${creativeInstanceId}`;
+    if (!ids.has(key)) ids.set(key, makeAdEventId("reward", ad.placement.format));
+    await this.flush();
     return this.api.validateAdReward({
-      sdk_event_id: makeAdEventId("reward", ad.placement.format),
+      sdk_event_id: ids.get(key),
+      creative_instance_id: creativeInstanceId,
+      tracking_token: ad.tracking.token,
       format: ad.placement.format,
       campaign_id: ad.campaign.id,
       creative_id: ad.creative.id,
       app_user_id: appUserId,
       session_id: sessionId,
-      sdk_install_id: installId(),
+      sdk_install_id: this.api.installId,
       viewed_seconds: viewedSeconds,
       completed,
     });
@@ -192,6 +205,11 @@ export class AdService {
   private getFromCache(key: string): AdObject | null | undefined {
     const entry = this.cache.get(key);
     if (!entry) return undefined;
+    // A signed delivery token authorizes one presentation, not every render within the cache TTL.
+    if (entry.ad?.tracking.token.split(":").length === 6) {
+      this.cache.delete(key);
+      return undefined;
+    }
     if (Date.now() > entry.expiresAt) {
       this.staleCache.set(key, entry);
       this.cache.delete(key);
@@ -201,7 +219,12 @@ export class AdService {
   }
 
   private getStale(key: string): AdObject | null | undefined {
-    return this.staleCache.get(key)?.ad;
+    const entry = this.staleCache.get(key);
+    if (!entry || Date.now() > entry.expiresAt + 5 * 60 * 1000 || entry.ad?.placement?.rewardEnabled) {
+      this.staleCache.delete(key);
+      return undefined;
+    }
+    return entry.ad;
   }
 
   private setCache(key: string, ad: AdObject | null, ttlSeconds: number) {

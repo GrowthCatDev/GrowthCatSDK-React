@@ -60,6 +60,7 @@ export interface GrowthCatSponsorData extends SponsorSlotContent {
 export type SponsorEventName = "impression" | "click";
 
 export interface SponsorEventPayload {
+  schema_version: 2;
   sdk_event_id: string;
   creative_instance_id: string;
   slot_key: string;
@@ -69,7 +70,7 @@ export interface SponsorEventPayload {
   occurred_at: string;
   measurement_mode: import("../core/privacy").GrowthCatMeasurementMode;
   sdk_install_id: string;
-  session_id: string;
+  session_id?: string;
   locale?: string;
   country_code?: string;
   sdk_version: string;

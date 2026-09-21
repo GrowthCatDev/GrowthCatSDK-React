@@ -17,6 +17,9 @@ export interface UseFeedbackBoardOptions {
 }
 
 export interface UseFeedbackBoardResult {
+  hasMore: boolean;
+  isLoadingMore: boolean;
+  loadMore: () => Promise<void>;
   items: FeedbackBoardItem[];
   isLoading: boolean;
   error: GrowthCatError | null;
@@ -35,15 +38,20 @@ export function useFeedbackBoard(options: UseFeedbackBoardOptions = {}): UseFeed
   const [error, setError] = useState<GrowthCatError | null>(null);
   const loadIdRef = useRef(0);
   const pendingVotesRef = useRef(new Set<string>());
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const loadingMoreRef = useRef(false);
 
   const load = useCallback(async () => {
     const loadId = ++loadIdRef.current;
     setIsLoading(true);
+    setNextCursor(null);
     setError(null);
     try {
-      const results = await GrowthCat.shared.fetchFeedbackBoard(options.type);
+      const page = await GrowthCat.shared.fetchFeedbackPage({ type: options.type });
       if (loadId !== loadIdRef.current) return;
-      setItems(results);
+      setItems(page.items);
+      setNextCursor(page.nextCursor);
     } catch (err) {
       if (loadId !== loadIdRef.current) return;
       setError(
@@ -55,6 +63,21 @@ export function useFeedbackBoard(options: UseFeedbackBoardOptions = {}): UseFeed
       if (loadId === loadIdRef.current) setIsLoading(false);
     }
   }, [options.type]);
+
+  const loadMore = useCallback(async () => {
+    if (!nextCursor || loadingMoreRef.current || isLoading) return;
+    loadingMoreRef.current = true;
+    setIsLoadingMore(true);
+    const loadId = loadIdRef.current;
+    try {
+      const page = await GrowthCat.shared.fetchFeedbackPage({ type: options.type, cursor: nextCursor });
+      if (loadId !== loadIdRef.current) return;
+      setItems(current => [...current, ...page.items.filter(item => !current.some(existing => existing.itemId === item.itemId))]);
+      setNextCursor(page.nextCursor === nextCursor ? null : page.nextCursor);
+    } catch (cause) {
+      if (loadId === loadIdRef.current) setError(toGrowthCatError(cause));
+    } finally { loadingMoreRef.current = false; setIsLoadingMore(false); }
+  }, [nextCursor, options.type, isLoading]);
 
   useEffect(() => {
     if (options.autoLoad !== false) void load();
@@ -132,7 +155,7 @@ export function useFeedbackBoard(options: UseFeedbackBoardOptions = {}): UseFeed
     }
   }, []);
 
-  return { items, isLoading, error, reload: load, vote, unvote };
+  return { items, isLoading, error, reload: load, vote, unvote, hasMore: nextCursor !== null, isLoadingMore, loadMore };
 }
 
 // ─── Submit hook ───────────────────────────────────────────────────────────────

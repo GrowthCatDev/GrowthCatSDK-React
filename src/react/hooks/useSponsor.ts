@@ -16,7 +16,7 @@ export interface UseSponsorResult {
   sponsor: GrowthCatSponsorData | null;
   state: SponsorLoadState;
   error: GrowthCatError | null;
-  trackImpression: (visibleFraction: number, visibleDurationMs: number) => Promise<boolean>;
+  trackImpression: (visibleFraction: number, visibleDurationMs: number, creative?: SponsorCreative) => Promise<boolean>;
   trackClick: (creative?: SponsorCreative) => Promise<boolean>;
   reload: () => Promise<void>;
 }
@@ -68,18 +68,16 @@ export function useSponsor(options: UseSponsorOptions): UseSponsorResult {
   }, [load]);
 
   const trackImpression = useCallback(
-    async (visibleFraction: number, visibleDurationMs: number) => {
+    async (visibleFraction: number, visibleDurationMs: number, creative?: SponsorCreative) => {
       if (!sponsor) return false;
-      if (sponsor.deliveryMode === "all" && sponsor.creatives?.length) {
-        const results = await Promise.all(sponsor.creatives.map((creative) =>
-          GrowthCat.shared.trackSponsorCreativeImpression(sponsor, creative, {
+      if (creative) {
+        return GrowthCat.shared.trackSponsorCreativeImpression(sponsor, creative, {
             visibleFraction,
             visibleDurationMs,
             sessionId: optionsRef.current.sessionId,
-          })
-        ));
-        return results.some(Boolean);
+          });
       }
+      if (sponsor.deliveryMode === "all") return false;
       return GrowthCat.shared.trackSponsorImpression(sponsor, {
         visibleFraction,
         visibleDurationMs,

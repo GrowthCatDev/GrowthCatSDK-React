@@ -51,6 +51,7 @@ export type {
   AttributionConfirmationOptions,
   AttributionResolveResult,
   GrowthCatReward,
+  GrowthCatRewardProgress,
   GrowthCatRewards,
 } from "./models/attribution";
 
@@ -66,6 +67,8 @@ export type { SponsorEventOptions } from "./services/sponsor-event-tracker";
 
 export type {
   FeedbackType,
+  FeedbackPage,
+  FeedbackPageOptions,
   FeedbackItemStatus,
   FeedbackUser,
   FeedbackSubmission,
@@ -83,6 +86,8 @@ export type {
   GrowthCatInitOptions,
   GrowthCatEnvironmentMode,
   GrowthCatWorkspace,
+  GrowthCatIdentityRequest,
+  GrowthCatDeliveryStatus,
 } from "./core/config";
 export type { GrowthCatMeasurementMode } from "./core/privacy";
 

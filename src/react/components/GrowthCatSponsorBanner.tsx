@@ -1,4 +1,5 @@
-import React, { useCallback, useEffect, useRef } from "react";
+import { useViewableImpression } from "../hooks/useViewableImpression";
+import React, { useCallback, useRef } from "react";
 import { useSponsor } from "../hooks/useSponsor";
 
 export interface GrowthCatSponsorBannerProps {
@@ -24,47 +25,9 @@ export function GrowthCatSponsorBanner({
 }: GrowthCatSponsorBannerProps) {
   const { sponsor, state, trackImpression, trackClick } = useSponsor({ slotKey, sessionId });
   const containerRef = useRef<HTMLAnchorElement>(null);
-  const multiContainerRef = useRef<HTMLDivElement>(null);
-  const impressionSent = useRef(false);
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const visibleFraction = useRef(0);
-
-  useEffect(() => {
-    const element = sponsor?.deliveryMode === "all" ? multiContainerRef.current : containerRef.current;
-    if (sponsor?.status !== "live" || !element) return;
-    impressionSent.current = false;
-    const clearTimer = () => {
-      if (timer.current != null) clearTimeout(timer.current);
-      timer.current = null;
-    };
-    const beginTimer = () => {
-      if (timer.current != null || impressionSent.current) return;
-      if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
-      timer.current = setTimeout(() => {
-        timer.current = null;
-        if (impressionSent.current || visibleFraction.current < 0.5) return;
-        if (document.visibilityState !== "visible") return;
-        impressionSent.current = true;
-        void trackImpression(visibleFraction.current, 1000);
-      }, 1000);
-    };
-    const observer = new IntersectionObserver((entries) => {
-      visibleFraction.current = entries[0]?.intersectionRatio ?? 0;
-      if (visibleFraction.current >= 0.5) beginTimer();
-      else clearTimer();
-    }, { threshold: 0.5 });
-    const handleVisibility = () => {
-      if (document.visibilityState === "visible" && visibleFraction.current >= 0.5) beginTimer();
-      else clearTimer();
-    };
-    observer.observe(element);
-    document.addEventListener("visibilitychange", handleVisibility);
-    return () => {
-      clearTimer();
-      observer.disconnect();
-      document.removeEventListener("visibilitychange", handleVisibility);
-    };
-  }, [sponsor, trackImpression]);
+  useViewableImpression(containerRef, sponsor, (fraction, duration) => {
+    void trackImpression(fraction, duration);
+  });
 
   const handleTap = useCallback((track = false, creative?: import("../../models/sponsor").SponsorCreative) => {
     if (track) void trackClick(creative);
@@ -100,23 +63,12 @@ export function GrowthCatSponsorBanner({
   const creative = sponsor.creative;
   if (sponsor.deliveryMode === "all" && sponsor.creatives?.length) {
     return (
-      <div ref={multiContainerRef} className={className} style={multiStyle(minHeight, style)} aria-label="Sponsors">
+      <div className={className} style={multiStyle(minHeight, style)} aria-label="Sponsors">
         <span style={{ ...badgeStyle, gridColumn: "1 / -1" }}>Sponsored</span>
         {sponsor.creatives.map((item) => (
-          <a
-            key={item.bookingId ?? item.sponsorName}
-            href={item.clickUrl}
-            target={item.clickUrl ? "_blank" : undefined}
-            rel={item.clickUrl ? "noopener noreferrer" : undefined}
-            onClick={() => handleTap(true, item)}
-            aria-label={item.headline ?? item.sponsorName ?? "Sponsored content"}
-            style={sponsorTileStyle}
-          >
-            {item.logoUrl && <img src={item.logoUrl} alt="" style={{ width: 40, height: 40, objectFit: "contain", borderRadius: 8 }} />}
-            <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              {item.sponsorName ?? item.headline ?? "Sponsor"}
-            </span>
-          </a>
+          <SponsorTile key={item.bookingId ?? item.sponsorName} item={item}
+            onImpression={(fraction, duration) => { void trackImpression(fraction, duration, item); }}
+            onClick={() => handleTap(true, item)} />
         ))}
       </div>
     );
@@ -189,3 +141,17 @@ const ctaStyle: React.CSSProperties = {
   flexShrink: 0, padding: "7px 12px", borderRadius: 8, backgroundColor: "#111827",
   color: "#FFFFFF", fontSize: 12, fontWeight: 700,
 };
+
+function SponsorTile({ item, onImpression, onClick }: {
+  item: import("../../models/sponsor").SponsorCreative;
+  onImpression: (fraction: number, duration: number) => void;
+  onClick: () => void;
+}) {
+  const ref = useRef<HTMLAnchorElement>(null);
+  useViewableImpression(ref, item, onImpression);
+  return <a ref={ref} href={item.clickUrl} target="_blank" rel="noopener noreferrer" onClick={onClick}
+    aria-label={item.headline ?? item.sponsorName ?? "Sponsored content"} style={sponsorTileStyle}>
+    {item.logoUrl && <img src={item.logoUrl} alt="" style={{ width: 40, height: 40, objectFit: "contain" }} />}
+    <span style={{ minWidth: 0, overflowWrap: "anywhere" }}>{item.sponsorName ?? item.headline ?? "Sponsor"}</span>
+  </a>;
+}

@@ -7,13 +7,15 @@ import {
   FeedbackVoteResult,
   FeedbackBoardItem,
   FeedbackType,
+  FeedbackPage,
+  FeedbackPageOptions,
   GrowthCatFeedbackTheme,
   GrowthCatFeedbackStrings,
   DEFAULT_FEEDBACK_THEME,
   DEFAULT_FEEDBACK_STRINGS,
 } from "../models/feedback";
 import { GrowthCatError } from "../models/errors";
-import { makeSessionId, scopedStorageKey } from "../core/install-id";
+import { makeSessionId } from "../core/install-id";
 
 function generateAnonId(): string {
   return `anon_${makeSessionId()}`;
@@ -24,7 +26,7 @@ export class FeedbackService {
   private readonly logger: GrowthCatLogger;
   private boardSlug: string | null = null;
   private slugPromise: Promise<string> | null = null;
-  private readonly anonymousIdKey = scopedStorageKey("growthcat_feedback_anon_id", 2);
+  private readonly anonymousIdKey: string;
 
   user: FeedbackUser | null = null;
   theme: GrowthCatFeedbackTheme = DEFAULT_FEEDBACK_THEME;
@@ -36,6 +38,7 @@ export class FeedbackService {
   constructor(api: ApiClient, logger: GrowthCatLogger) {
     this.api = api;
     this.logger = logger;
+    this.anonymousIdKey = api.storageKey("feedback_anon_id");
     this.anonymousId = this.loadOrCreateAnonId();
   }
 
@@ -72,6 +75,11 @@ export class FeedbackService {
   async fetchBoard(type?: FeedbackType): Promise<FeedbackBoardItem[]> {
     const slug = await this.resolveSlug();
     return this.api.fetchFeedbackBoard(slug, type, this.user?.id, this.user ? undefined : this.anonymousId);
+  }
+
+  async fetchPage(options: FeedbackPageOptions = {}): Promise<FeedbackPage> {
+    const slug = await this.resolveSlug();
+    return this.api.fetchFeedbackPage(slug, options, this.user?.id, this.user ? undefined : this.anonymousId);
   }
 
   async vote(itemId: string): Promise<FeedbackVoteResult> {

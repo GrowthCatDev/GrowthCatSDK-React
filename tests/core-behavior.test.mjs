@@ -230,9 +230,10 @@ test("bootstrap queue limits are applied to ad tracking", async () => {
     metadata: { quartile: 50 },
   });
 
-  const queueEntry = [...storage.entries()]
-    .find(([key]) => key.startsWith("growthcat_ad_events:"));
-  assert.equal(JSON.parse(queueEntry[1]).events.length, 1);
+  const queueEntries = [...storage.entries()]
+    .filter(([key]) => key.startsWith("growthcat_ad_events:"));
+  assert.equal(queueEntries.length, 1);
+  assert.equal(JSON.parse(queueEntries[0][1]).metadata.quartile, 50);
   shutdown();
 });
 
@@ -279,15 +280,17 @@ test("object-based attribution confirmation and permanent rejection handling", a
     throw new Error(`Unexpected request: ${pathname}`);
   };
 
-  GrowthCat.initialize({ apiKey: "gc_test_attribution", baseUrl: "https://example.test" });
+  const rejected = [];
+  GrowthCat.initialize({ apiKey: "gc_test_attribution", baseUrl: "https://example.test", identityTokenProvider: async () => "test-identity", onDeliveryStatus: status => { if (status.state === "rejected") rejected.push(status); } });
   await GrowthCat.ready();
   GrowthCat.setAppUserId("user-1");
   await GrowthCat.shared.confirmAttribution({
     touchpointId: "touchpoint-1",
     sessionId: "session-1",
   });
-  await assert.rejects(() => GrowthCat.shared.track("bad-event"));
-  await assert.rejects(() => GrowthCat.shared.track("bad-event-again"));
+  await GrowthCat.shared.track("bad-event");
+  await GrowthCat.shared.track("bad-event-again");
+  assert.equal(rejected.length, 2);
 
   assert.equal(claims[0].touchpoint_id, "touchpoint-1");
   assert.equal(claims[0].match_type, "confirmed_referral");

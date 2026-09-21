@@ -26,7 +26,8 @@ export class GrowthCatDebugLogger implements GrowthCatLogger {
   }
 
   logInitialization(apiKey: string, baseUrl: string) {
-    this.log(`initialized — key=${apiKey.slice(0, 12)}… baseURL=${baseUrl}`);
+    void apiKey;
+    this.log(`initialized — baseURL=${baseUrl}`);
   }
 
   logBootstrapSuccess() {

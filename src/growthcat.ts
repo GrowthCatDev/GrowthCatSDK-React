@@ -32,7 +32,7 @@ export const GrowthCat = {
     const config = buildConfiguration(options);
     if (_client) _client.shutdown();
 
-    configureIdentityScope(config.apiKey, config.baseUrl);
+    configureIdentityScope(config.apiKey, config.baseUrl, config.workspace);
     _client = new GrowthCatClient(config);
 
     const logger = new GrowthCatDebugLogger(config.logsEnabled);

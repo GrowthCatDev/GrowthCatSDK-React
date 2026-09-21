@@ -41,7 +41,7 @@ export function GrowthCatFeedbackBoard({
   const prefersDark = usePrefersDarkMode();
   const isCompact = useMediaQuery("(max-width: 640px)");
 
-  const { items, isLoading, error, reload, vote, unvote } = useFeedbackBoard({
+  const { items, isLoading, error, reload, vote, unvote, hasMore, isLoadingMore, loadMore } = useFeedbackBoard({
     type: activeType,
     autoLoad: true,
   });
@@ -83,6 +83,7 @@ export function GrowthCatFeedbackBoard({
           {strings?.boardTitle ?? "Feedback"}
         </h2>
         <button
+          aria-label={strings?.title ?? "Send feedback"}
           onClick={() => setShowCompose(true)}
           style={{
             width: 36,
@@ -188,6 +189,10 @@ export function GrowthCatFeedbackBoard({
         </ul>
       )}
 
+      {hasMore && <button type="button" disabled={isLoadingMore} onClick={() => void loadMore()}>
+        {isLoadingMore ? "Loading..." : "Load more"}
+      </button>}
+
       {/* Compose sheet */}
       {showCompose && (
         <ComposeSheet
@@ -287,6 +292,8 @@ function BoardItemRow({
       {/* Vote */}
       <button
         onClick={onVote}
+        aria-label={item.hasVoted ? `Remove vote for ${item.title}` : `Vote for ${item.title}`}
+        aria-pressed={item.hasVoted}
         style={{
           display: "flex",
           flexDirection: "column",
@@ -400,6 +407,7 @@ function ComposeSheet({
   const panelRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    const previousFocus = document.activeElement as HTMLElement | null;
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     closeButtonRef.current?.focus();
@@ -423,6 +431,7 @@ function ComposeSheet({
     document.addEventListener("keydown", handleKeyDown);
     return () => {
       document.body.style.overflow = previousOverflow;
+      previousFocus?.focus();
       document.removeEventListener("keydown", handleKeyDown);
     };
   }, [onClose]);
@@ -488,9 +497,9 @@ function ComposeSheet({
         ) : (
           <form onSubmit={handleSubmit}>
             {/* Type selector */}
-            <label htmlFor={titleId} style={{ fontSize: 13, fontWeight: 600, color: secondaryText, display: "block", marginBottom: 6 }}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: secondaryText, display: "block", marginBottom: 6 }}>
               {strings?.typeLabel ?? "Category"}
-            </label>
+            </div>
             <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
               {TYPES.map((t) => (
                 <button
@@ -515,7 +524,7 @@ function ComposeSheet({
             </div>
 
             {/* Title */}
-            <label style={{ fontSize: 13, fontWeight: 600, color: secondaryText, display: "block", marginBottom: 6 }}>
+            <label htmlFor={titleId} style={{ fontSize: 13, fontWeight: 600, color: secondaryText, display: "block", marginBottom: 6 }}>
               {strings?.titleLabel ?? "Summary"}
             </label>
             <input

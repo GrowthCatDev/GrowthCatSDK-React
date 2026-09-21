@@ -1,4 +1,5 @@
-import React, { useRef, useEffect, useCallback } from "react";
+import { useViewableImpression } from "../hooks/useViewableImpression";
+import React, { useRef, useCallback } from "react";
 import { useAd, UseAdOptions } from "../hooks/useAd";
 import { AdObject } from "../../models/ads";
 
@@ -41,55 +42,9 @@ export function GrowthCatAdBanner({
   });
 
   const containerRef = useRef<HTMLAnchorElement>(null);
-  const impressionSent = useRef(false);
-  const visibilityTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const visibleFraction = useRef(0);
-
-  // A banner impression requires at least 50% continuous visibility for 1s.
-  useEffect(() => {
-    if (!ad || !containerRef.current) return;
-    impressionSent.current = false;
-    const clearVisibilityTimer = () => {
-      if (visibilityTimer.current != null) clearTimeout(visibilityTimer.current);
-      visibilityTimer.current = null;
-    };
-    const beginVisibilityTimer = () => {
-      if (visibilityTimer.current != null || impressionSent.current) return;
-      if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
-      visibilityTimer.current = setTimeout(() => {
-        visibilityTimer.current = null;
-        if (impressionSent.current || visibleFraction.current < 0.5) return;
-        if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
-        impressionSent.current = true;
-        trackEvent("impression", {
-          visible_fraction: visibleFraction.current,
-          visible_duration_ms: 1000,
-        });
-      }, 1000);
-    };
-    const observer = new IntersectionObserver(
-      (entries) => {
-        visibleFraction.current = entries[0]?.intersectionRatio ?? 0;
-        if (visibleFraction.current >= 0.5) beginVisibilityTimer();
-        else clearVisibilityTimer();
-      },
-      { threshold: 0.5 }
-    );
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === "visible" && visibleFraction.current >= 0.5) {
-        beginVisibilityTimer();
-      } else {
-        clearVisibilityTimer();
-      }
-    };
-    observer.observe(containerRef.current);
-    document.addEventListener("visibilitychange", handleVisibilityChange);
-    return () => {
-      clearVisibilityTimer();
-      observer.disconnect();
-      document.removeEventListener("visibilitychange", handleVisibilityChange);
-    };
-  }, [ad, trackEvent]);
+  useViewableImpression(containerRef, ad, (fraction, duration) => {
+    trackEvent("impression", { visible_fraction: fraction, visible_duration_ms: duration });
+  });
 
   const handleTap = useCallback(() => {
     if (!ad) return;

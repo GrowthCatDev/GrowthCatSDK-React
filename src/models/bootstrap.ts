@@ -1,3 +1,4 @@
+import { GrowthCatError } from "./errors";
 export interface GrowthCatSDKBootstrap {
   appId: string;
   authenticated: boolean;
@@ -43,13 +44,13 @@ export function parseBootstrap(raw: Record<string, unknown>): GrowthCatSDKBootst
 
   return {
     appId: String(raw["app_id"] ?? ""),
-    authenticated: Boolean(raw["authenticated"] ?? true),
+    authenticated: booleanValue(raw["authenticated"] ?? true),
     workspace: raw["workspace"] != null ? String(raw["workspace"]) : undefined,
     sdkConfig: {
-      showCodeRedeemUI: Boolean(sdkConfigRaw["show_code_redeem_ui"] ?? false),
-      allowCodeRedeemExecution: Boolean(sdkConfigRaw["allow_code_redeem_execution"] ?? false),
+      showCodeRedeemUI: booleanValue(sdkConfigRaw["show_code_redeem_ui"] ?? false),
+      allowCodeRedeemExecution: booleanValue(sdkConfigRaw["allow_code_redeem_execution"] ?? false),
       sandboxEnabled: sdkConfigRaw["sandbox_enabled"] != null
-        ? Boolean(sdkConfigRaw["sandbox_enabled"])
+        ? booleanValue(sdkConfigRaw["sandbox_enabled"])
         : undefined,
       defaultWorkspace: sdkConfigRaw["default_workspace"] != null
         ? String(sdkConfigRaw["default_workspace"])
@@ -59,19 +60,19 @@ export function parseBootstrap(raw: Record<string, unknown>): GrowthCatSDKBootst
         : undefined,
     },
     readiness: {
-      canValidateCodes: Boolean(readinessRaw["can_validate_codes"] ?? false),
+      canValidateCodes: booleanValue(readinessRaw["can_validate_codes"] ?? false),
       checks: {
-        sdkKeyValid: Boolean(checksRaw["sdk_key_valid"] ?? true),
-        appActive: Boolean(checksRaw["app_active"] ?? true),
+        sdkKeyValid: booleanValue(checksRaw["sdk_key_valid"] ?? true),
+        appActive: booleanValue(checksRaw["app_active"] ?? true),
         sandboxEnabled: checksRaw["sandbox_enabled"] != null
-          ? Boolean(checksRaw["sandbox_enabled"])
+          ? booleanValue(checksRaw["sandbox_enabled"])
           : undefined,
-        revenueCatSecretConfigured: Boolean(checksRaw["revenuecat_secret_configured"] ?? false),
-        revenueCatWebhookConfigured: Boolean(checksRaw["revenuecat_webhook_configured"] ?? false),
+        revenueCatSecretConfigured: booleanValue(checksRaw["revenuecat_secret_configured"] ?? false),
+        revenueCatWebhookConfigured: booleanValue(checksRaw["revenuecat_webhook_configured"] ?? false),
       },
     },
     adsConfig: {
-      adsEnabled: Boolean(adsRaw["ads_enabled"] ?? false),
+      adsEnabled: booleanValue(adsRaw["ads_enabled"] ?? false),
       adCacheTtlSeconds: finiteNumber(adsRaw["ad_cache_ttl_seconds"], 300, 0),
       maxOfflineAdEvents: finiteNumber(adsRaw["max_offline_ad_events"], 500, 1),
       measurementSchemaVersion: finiteNumber(adsRaw["measurement_schema_version"], 1, 1),
@@ -82,4 +83,9 @@ export function parseBootstrap(raw: Record<string, unknown>): GrowthCatSDKBootst
 function finiteNumber(raw: unknown, fallback: number, minimum: number): number {
   const value = Number(raw ?? fallback);
   return Number.isFinite(value) && value >= minimum ? value : fallback;
+}
+
+function booleanValue(value: unknown): boolean {
+  if (typeof value !== "boolean") throw GrowthCatError.server(502, "Invalid bootstrap boolean.");
+  return value;
 }

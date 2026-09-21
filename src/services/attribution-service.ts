@@ -1,6 +1,8 @@
 import { ApiClient } from "../core/api";
 import { GrowthCatLogger } from "../core/logger";
-import { installId, scopedStorageKey } from "../core/install-id";
+import { makeSessionId } from "../core/install-id";
+import { EventQueue, isQueuedEvent } from "../core/event-queue";
+import { MeasurementState } from "../core/privacy";
 import {
   AttributionLink,
   AttributionAssignment,
@@ -12,34 +14,33 @@ import {
 import { GrowthCatAnalyticsValue } from "../models/referral";
 import { GrowthCatError } from "../models/errors";
 
-const MAX_QUEUED_EVENTS = 100;
-const MAX_EVENT_AGE_MS = 72 * 60 * 60 * 1000;
-
-interface PendingAttributionEvent {
-  request: AttributionEventRequest;
-  queuedAt: string;
-}
-
 export class AttributionService {
   private readonly api: ApiClient;
   private readonly logger: GrowthCatLogger;
   private appUserId: string | null = null;
-  private readonly appUserIdKey = scopedStorageKey("growthcat_app_user_id", 2);
-  private readonly pendingEventsKey = scopedStorageKey("growthcat_pending_events", 2);
-  private retryTimer: ReturnType<typeof setTimeout> | null = null;
-  private retryAttempt = 0;
-  private flushing = false;
+  private readonly appUserIdKey: string;
+  private readonly queue: EventQueue<AttributionEventRequest>;
+  private readonly unsubscribe: () => void;
 
-  constructor(api: ApiClient, logger: GrowthCatLogger) {
+  constructor(api: ApiClient, logger: GrowthCatLogger, private readonly measurement = new MeasurementState("essential")) {
     this.api = api;
     this.logger = logger;
+    this.appUserIdKey = api.storageKey("app_user_id");
     this.appUserId = this.loadStoredUserId();
-    if (typeof window !== "undefined") window.addEventListener("online", this.onOnline);
+    this.queue = new EventQueue<AttributionEventRequest>({
+      key: api.storageKey("attribution_events"), maxEvents: 100,
+      allowed: event => measurement.allowsEssentialMeasurement() && event.app_user_id === this.appUserId,
+      valid: (event): event is AttributionEventRequest => isQueuedEvent(event) && typeof (event as AttributionEventRequest).event_name === "string" && typeof (event as AttributionEventRequest).app_user_id === "string",
+      send: event => api.trackAttributionEvent(event),
+      notify: status => api.notifyDelivery(status),
+    });
+    this.unsubscribe = measurement.subscribe(() => this.queue.filter());
   }
 
   setAppUserId(userId: string) {
     const normalized = userId.trim();
-    if (!normalized) throw GrowthCatError.missingAppUserId();
+    if (!normalized || normalized.length > 255) throw GrowthCatError.missingAppUserId();
+    if (this.appUserId !== normalized) { this.api.cancelMeasurement(); this.queue.clear(); }
     this.appUserId = normalized;
     try {
       localStorage.setItem(this.appUserIdKey, normalized);
@@ -49,6 +50,7 @@ export class AttributionService {
   }
 
   clearAppUserId(): void {
+    this.api.cancelMeasurement();
     this.appUserId = null;
     this.clearQueuedEvents();
     try {
@@ -84,7 +86,7 @@ export class AttributionService {
     const appUserId = this.requireAppUserId();
     return this.api.claimAttribution({
       app_user_id: appUserId,
-      sdk_install_id: installId(),
+      sdk_install_id: this.api.installId,
       token,
       match_type: "explicit_token",
     });
@@ -94,9 +96,9 @@ export class AttributionService {
     const appUserId = this.requireAppUserId();
     const result = await this.api.resolveAttribution({
       app_user_id: appUserId,
-      sdk_install_id: installId(),
+      sdk_install_id: this.api.installId,
       platform: "web",
-      referrer_url: typeof document !== "undefined" ? document.referrer : undefined,
+
     });
 
     if (result.matched && result.requiresConfirmation === false && (result.touchpointId || result.token)) {
@@ -105,7 +107,7 @@ export class AttributionService {
       // upgrades a downgraded match_type to reward-eligible.
       await this.api.claimAttribution({
         app_user_id: appUserId,
-        sdk_install_id: installId(),
+        sdk_install_id: this.api.installId,
         session_id: sessionId,
         touchpoint_id: result.touchpointId,
         token: result.touchpointId ? undefined : result.token,
@@ -132,7 +134,7 @@ export class AttributionService {
     // explicit token claim. Both are reward-eligible server-side.
     return this.api.claimAttribution({
       app_user_id: appUserId,
-      sdk_install_id: installId(),
+      sdk_install_id: this.api.installId,
       session_id: options.sessionId,
       touchpoint_id: options.touchpointId,
       token: options.touchpointId ? undefined : options.token?.trim(),
@@ -141,116 +143,22 @@ export class AttributionService {
   }
 
   async track(eventName: string, properties?: Record<string, GrowthCatAnalyticsValue>) {
-    const appUserId = this.requireAppUserId();
-    const normalizedEventName = eventName.trim().slice(0, 128);
-    if (!normalizedEventName) throw GrowthCatError.unknown("eventName must not be empty.");
-    const request: AttributionEventRequest = {
-      app_user_id: appUserId,
-      sdk_install_id: installId(),
-      event_name: normalizedEventName,
+    if (!this.measurement.allowsEssentialMeasurement()) return;
+    const name = eventName.trim();
+    if (!name || name.length > 120) throw GrowthCatError.unknown("eventName must contain 1 to 120 characters.");
+    this.queue.enqueue({
+      sdk_event_id: makeSessionId(), app_user_id: this.requireAppUserId(),
+      sdk_install_id: this.api.installId, event_name: name,
+      occurred_at: new Date().toISOString(), measurement_mode: "essential",
+      session_id: this.measurement.allowsOptionalAnalytics() ? this.measurement.sessionId : undefined,
       properties: sanitizeProperties(properties),
-    };
-    await this.flushQueuedEvents();
-    try {
-      await this.api.trackAttributionEvent(request);
-    } catch (error) {
-      // Qualifying events drive reward grants — persist failures and retry on the
-      // next track call rather than silently losing them.
-      if (isRetryable(error)) this.enqueueEvent(request);
-      throw error;
-    }
+    });
+    await this.queue.flush();
   }
 
-  /** Best-effort resend of previously failed events, oldest first. */
-  async flushQueuedEvents(): Promise<void> {
-    if (this.flushing) return;
-    const pending = this.loadPendingEvents();
-    if (pending.length === 0) return;
-    this.flushing = true;
-    try {
-      while (pending.length > 0) {
-        const event = pending[0]!;
-        try {
-          await this.api.trackAttributionEvent(event.request);
-          pending.shift();
-          this.retryAttempt = 0;
-          this.savePendingEvents(pending);
-        } catch (error) {
-          if (isRetryable(error)) {
-            this.savePendingEvents(pending);
-            this.scheduleRetry(error);
-            return;
-          }
-          pending.shift();
-          this.savePendingEvents(pending);
-          this.logger.warn(`[Attribution] dropped rejected ${event.request.event_name} event`);
-        }
-      }
-    } finally {
-      this.flushing = false;
-    }
-  }
-
-  shutdown(): void {
-    if (this.retryTimer != null) clearTimeout(this.retryTimer);
-    this.retryTimer = null;
-    if (typeof window !== "undefined") window.removeEventListener("online", this.onOnline);
-  }
-
-  private readonly onOnline = () => void this.flushQueuedEvents();
-
-  private scheduleRetry(error: unknown): void {
-    if (this.retryTimer != null) return;
-    this.retryAttempt = Math.min(this.retryAttempt + 1, 8);
-    const retryAfter = error instanceof GrowthCatError ? error.retryAfter : undefined;
-    const exponential = Math.min(60_000, 1_000 * 2 ** this.retryAttempt);
-    const delay = retryAfter != null && Number.isFinite(retryAfter)
-      ? retryAfter * 1000
-      : exponential + Math.floor(Math.random() * Math.max(250, exponential * 0.25));
-    this.retryTimer = setTimeout(() => {
-      this.retryTimer = null;
-      void this.flushQueuedEvents();
-    }, Math.max(0, delay));
-  }
-
-  private enqueueEvent(request: AttributionEventRequest): void {
-    const pending = this.loadPendingEvents();
-    pending.push({ request, queuedAt: new Date().toISOString() });
-    this.savePendingEvents(pending.slice(-MAX_QUEUED_EVENTS));
-  }
-
-  private loadPendingEvents(): PendingAttributionEvent[] {
-    try {
-      const raw = localStorage.getItem(this.pendingEventsKey);
-      const parsed: unknown = raw ? JSON.parse(raw) : [];
-      if (!Array.isArray(parsed)) return [];
-      const cutoff = Date.now() - MAX_EVENT_AGE_MS;
-      return parsed.flatMap((entry): PendingAttributionEvent[] => {
-        if (!entry || typeof entry !== "object") return [];
-        const record = entry as Record<string, unknown>;
-        const request = (record["request"] ?? record) as AttributionEventRequest;
-        const queuedAt = typeof record["queuedAt"] === "string"
-          ? record["queuedAt"]
-          : new Date().toISOString();
-        if (!request.event_name || Date.parse(queuedAt) < cutoff) return [];
-        return [{ request, queuedAt }];
-      });
-    } catch {
-      return [];
-    }
-  }
-
-  private savePendingEvents(events: PendingAttributionEvent[]): void {
-    try {
-      localStorage.setItem(this.pendingEventsKey, JSON.stringify(events));
-    } catch {
-      // storage unavailable — degrade to in-memory-only behavior
-    }
-  }
-
-  clearQueuedEvents(): void {
-    this.savePendingEvents([]);
-  }
+  flushQueuedEvents(): Promise<void> { return this.queue.flush(); }
+  clearQueuedEvents(): void { this.queue.clear(); }
+  shutdown(): void { this.unsubscribe(); this.queue.shutdown(); }
 
   async rewards(): Promise<GrowthCatRewards> {
     const appUserId = this.requireAppUserId();
@@ -269,13 +177,6 @@ export class AttributionService {
       return null;
     }
   }
-}
-
-function isRetryable(error: unknown): boolean {
-  if (!(error instanceof GrowthCatError)) return true;
-  return error.code === "network" ||
-    error.code === "rate_limited" ||
-    (error.code === "server" && (error.statusCode ?? 500) >= 500);
 }
 
 function sanitizeProperties(

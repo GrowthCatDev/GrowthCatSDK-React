@@ -19,13 +19,21 @@ GrowthCat.initialize({
   workspace: "live",
   measurementMode: "essential",
   requestTimeoutMs: 10_000,
+  identityTokenProvider: async ({ appUserId, scope, eventName, eventId, forceRefresh }) => {
+    void [appUserId, scope, eventName, eventId, forceRefresh];
+    return "example-token-from-authenticated-host-server";
+  },
 });
 
 async function useHeadlessAPI(ad: AdObject): Promise<AttributionAssignment | null> {
   await GrowthCat.ready();
   GrowthCat.setAppUserId("user-123");
   await GrowthCat.shared.prefetchAdCatalogs(["home"]);
-  GrowthCat.shared.trackAdEvent("impression", ad);
+  const creativeInstanceId = GrowthCat.makeCreativeInstanceId();
+  GrowthCat.shared.trackAdEvent("impression", ad, { creativeInstanceId, metadata: { measurement_version: 2, visible_fraction: 1, visible_duration_ms: 1000 } });
+  await GrowthCat.shared.flushEvents();
+  await GrowthCat.shared.fetchFeedbackPage({ type: "bug", limit: 20 });
+  await GrowthCat.shared.rewardsProgress();
   await GrowthCat.shared.confirmAttribution({ token: "token-123" });
   const assignment = await GrowthCat.handleCurrentUrl();
   GrowthCat.clearAppUserId();

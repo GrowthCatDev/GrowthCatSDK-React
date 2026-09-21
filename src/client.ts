@@ -7,7 +7,8 @@ import { FeedbackService } from "./services/feedback-service";
 import { AnalyticsEventTracker, sanitizeAnalyticsProperties } from "./services/analytics-event-tracker";
 import { SponsorEventOptions, SponsorEventTracker } from "./services/sponsor-event-tracker";
 import { MeasurementState, GrowthCatMeasurementMode } from "./core/privacy";
-import { installId, makeAdEventId, makeCreativeInstanceId } from "./core/install-id";
+import { makeAdEventId, makeCreativeInstanceId } from "./core/install-id";
+import { qualifiedImpression } from "./services/ad-event-tracker";
 import { GROWTHCAT_WEB_SDK_VERSION } from "./core/version";
 import {
   GrowthCatSDKBootstrap,
@@ -42,6 +43,8 @@ import {
   FeedbackVoteResult,
   FeedbackBoardItem,
   FeedbackType,
+  FeedbackPage,
+  FeedbackPageOptions,
   GrowthCatFeedbackTheme,
   GrowthCatFeedbackStrings,
 } from "./models/feedback";
@@ -65,14 +68,19 @@ export class GrowthCatClient {
   private shutdownFlag = false;
   private hiddenAt: number | null = null;
   private sessionEventRecorded = false;
+  private readonly configListeners = new Set<(config: GrowthCatSDKConfig) => void>();
 
   constructor(config: GrowthCatConfiguration) {
     this.config = config;
     this.logger = new GrowthCatDebugLogger(config.logsEnabled);
     this.api = new ApiClient(config);
-    this.measurement = new MeasurementState(config.measurementMode);
+    this.measurement = new MeasurementState(config.measurementMode, this.api.storageKey("measurement_mode"));
+    this.measurement.subscribe(mode => {
+      this.api.cancelMeasurement();
+      if (mode !== "analytics") this.sessionEventRecorded = false;
+    });
     this.adService = new AdService(this.api, this.logger, this.measurement);
-    this.attributionService = new AttributionService(this.api, this.logger);
+    this.attributionService = new AttributionService(this.api, this.logger, this.measurement);
     this.feedbackService = new FeedbackService(this.api, this.logger);
     this.analyticsEventTracker = new AnalyticsEventTracker(this.api, this.logger, this.measurement);
     this.sponsorEventTracker = new SponsorEventTracker(this.api, this.logger, this.measurement);
@@ -104,6 +112,7 @@ export class GrowthCatClient {
   }
 
   setMeasurementMode(mode: GrowthCatMeasurementMode): void {
+    if (mode !== this.measurementMode) this.api.cancelMeasurement();
     this.measurement.setMode(mode);
     if (mode !== "analytics") this.sessionEventRecorded = false;
     if (mode === "disabled") {
@@ -124,8 +133,10 @@ export class GrowthCatClient {
           throw GrowthCatError.unknown("SDK client was shut down.");
         }
         this.bootstrapCache = bootstrap;
+        for (const listener of this.configListeners) listener(bootstrap.sdkConfig);
         this.api.setMeasurementSchemaVersion(bootstrap.adsConfig.measurementSchemaVersion);
         this.adService.configure(bootstrap.adsConfig);
+        void this.flushEvents();
         this.logger.logBootstrapSuccess();
         return bootstrap;
       })
@@ -138,6 +149,11 @@ export class GrowthCatClient {
   async refreshSDKConfig(): Promise<GrowthCatSDKConfig> {
     const bootstrap = await this.refreshSDKBootstrap();
     return bootstrap.sdkConfig;
+  }
+
+  subscribeSDKConfig(listener: (config: GrowthCatSDKConfig) => void): () => void {
+    this.configListeners.add(listener);
+    return () => { this.configListeners.delete(listener); };
   }
 
   // ─── Referral ──────────────────────────────────────────────────────────────
@@ -157,8 +173,8 @@ export class GrowthCatClient {
 
     const response = await this.api.validateCode({
       code: normalized,
-      app_user_id: this.attributionService.getAppUserId() ?? undefined,
-      session_id: context?.sessionId,
+      app_user_id: this.requireUserId(),
+      session_id: this.measurement.allowsOptionalAnalytics() ? context?.sessionId ?? this.measurement.sessionId : undefined,
       source: context?.source,
       locale: typeof navigator !== "undefined" ? navigator.language : undefined,
       platform: "web",
@@ -178,12 +194,14 @@ export class GrowthCatClient {
     if (!this.measurement.allowsOptionalAnalytics()) return;
     const normalized = code.trim().toUpperCase();
     if (!normalized) throw GrowthCatError.invalidCode("Please enter a referral code.");
-    await this.api.recordReferralClick({
-      code: normalized,
+    if (normalized.length > 128) throw GrowthCatError.invalidCode("Referral code is too long.");
+    this.analyticsEventTracker.enqueue({
+      schema_version: 2, sdk_event_id: makeAdEventId("referral_click", "analytics"),
+      event_name: "referral_click", code: normalized,
       app_user_id: this.attributionService.getAppUserId() ?? undefined,
-      session_id: context?.sessionId,
-      source: context?.source,
-      platform: "web",
+      session_id: context?.sessionId ?? this.measurement.sessionId, source: context?.source,
+      platform: "web", event_at: new Date().toISOString(), measurement_mode: "analytics",
+      sdk_version: GROWTHCAT_WEB_SDK_VERSION, sdk_install_id: this.api.installId,
     });
   }
 
@@ -210,10 +228,9 @@ export class GrowthCatClient {
       properties: sanitizeAnalyticsProperties(eventName, options?.properties),
       platform: "web",
       locale: typeof navigator !== "undefined" ? navigator.language : undefined,
-      country_code: currentCountryCode(),
       measurement_mode: this.measurement.measurementMode,
       sdk_version: GROWTHCAT_WEB_SDK_VERSION,
-      sdk_install_id: installId(),
+      sdk_install_id: this.api.installId,
     });
   }
 
@@ -240,14 +257,15 @@ export class GrowthCatClient {
   async validateAdReward(
     ad: AdObject,
     appUserId: string,
-    options?: { sessionId?: string; viewedSeconds?: number; completed?: boolean }
+    options?: { sessionId?: string; viewedSeconds?: number; completed?: boolean; creativeInstanceId?: string }
   ): Promise<AdRewardValidationResponse> {
     return this.adService.validateReward(
       ad,
       appUserId,
       options?.sessionId,
       options?.viewedSeconds ?? 0,
-      options?.completed ?? false
+      options?.completed ?? false,
+      options?.creativeInstanceId
     );
   }
 
@@ -265,10 +283,19 @@ export class GrowthCatClient {
   // ─── Attribution ───────────────────────────────────────────────────────────
 
   setAppUserId(userId: string) {
+    const previous = this.attributionService.getAppUserId();
     this.attributionService.setAppUserId(userId);
+    if (previous && previous !== this.attributionService.getAppUserId()) {
+      this.analyticsEventTracker.clear();
+      this.adService.eventTracker.clearOptionalEvents();
+      this.measurement.rotateSession();
+    }
   }
 
   clearAppUserId() {
+    this.analyticsEventTracker.clear();
+    this.adService.eventTracker.clearOptionalEvents();
+    this.measurement.rotateSession();
     this.attributionService.clearAppUserId();
   }
 
@@ -306,6 +333,10 @@ export class GrowthCatClient {
     return this.attributionService.rewards();
   }
 
+  async rewardsProgress(): Promise<import("./models/attribution").GrowthCatRewardProgress[]> {
+    return this.api.fetchRewardsProgress(this.requireUserId());
+  }
+
   // ─── Sponsors ──────────────────────────────────────────────────────────────
 
   /**
@@ -313,6 +344,7 @@ export class GrowthCatClient {
    * payload for rendering a "Sponsor this app" placeholder, or empty.
    */
   async sponsor(slotKey: string): Promise<SponsorSlotContent> {
+    await this.resolvedBootstrap();
     const normalizedSlotKey = slotKey.trim();
     if (!normalizedSlotKey) throw GrowthCatError.unknown("slotKey must not be empty.");
     const sponsor = await this.api.getSponsor(normalizedSlotKey);
@@ -353,16 +385,15 @@ export class GrowthCatClient {
   ): Promise<boolean> {
     if (
       data.status !== "live" || !creative.bookingId || !creative.trackingToken ||
-      options.visibleFraction < 0.5 || options.visibleDurationMs < 1000
+      !qualifiedImpression(options.visibleFraction, options.visibleDurationMs)
     ) return false;
-    this.sponsorEventTracker.track(data.slotKey, "impression", data, {
+    return this.sponsorEventTracker.track(data.slotKey, "impression", data, {
       creative,
       creativeInstanceId: this.sponsorCreativeInstanceId(data, creative),
       sessionId: options.sessionId,
       visibleFraction: Math.max(0, Math.min(1, options.visibleFraction)),
       visibleDurationMs: Math.max(0, Math.round(options.visibleDurationMs)),
     });
-    return true;
   }
 
   /** Track a click on one creative in a simultaneous sponsor placement. */
@@ -372,12 +403,11 @@ export class GrowthCatClient {
     options?: { sessionId?: string }
   ): Promise<boolean> {
     if (data.status !== "live" || !creative.bookingId || !creative.trackingToken) return false;
-    this.sponsorEventTracker.track(data.slotKey, "click", data, {
+    return this.sponsorEventTracker.track(data.slotKey, "click", data, {
       creative,
       creativeInstanceId: this.sponsorCreativeInstanceId(data, creative),
       sessionId: options?.sessionId,
     });
-    return true;
   }
 
   /** Track a qualified sponsor impression. Returns false when not viewable/live. */
@@ -388,18 +418,16 @@ export class GrowthCatClient {
     if (
       data.status !== "live" ||
       !data.creative ||
-      options.visibleFraction < 0.5 ||
-      options.visibleDurationMs < 1000
+      !qualifiedImpression(options.visibleFraction, options.visibleDurationMs)
     ) {
       return false;
     }
-    this.sponsorEventTracker.track(data.slotKey, "impression", data, {
+    return this.sponsorEventTracker.track(data.slotKey, "impression", data, {
       creativeInstanceId: data.creativeInstanceId,
       sessionId: options.sessionId,
       visibleFraction: Math.max(0, Math.min(1, options.visibleFraction)),
       visibleDurationMs: Math.max(0, Math.round(options.visibleDurationMs)),
     });
-    return true;
   }
 
   /** Track a deliberate click on a live sponsor creative. */
@@ -408,11 +436,10 @@ export class GrowthCatClient {
     options?: { sessionId?: string }
   ): Promise<boolean> {
     if (data.status !== "live" || !data.creative) return false;
-    this.sponsorEventTracker.track(data.slotKey, "click", data, {
+    return this.sponsorEventTracker.track(data.slotKey, "click", data, {
       creativeInstanceId: data.creativeInstanceId,
       sessionId: options?.sessionId,
     });
-    return true;
   }
 
   /** Flush queued sponsor events immediately. */
@@ -426,9 +453,9 @@ export class GrowthCatClient {
     eventName: "impression" | "click",
     options?: SponsorEventOptions
   ): Promise<void> {
+    if (!this.measurement.allowsEssentialMeasurement()) return;
     const sponsor = this.sponsorCache.get(slotKey);
     if (!sponsor) {
-      try { await this.api.trackSponsorEvent(slotKey, eventName); } catch { /* best effort */ }
       return;
     }
     this.sponsorEventTracker.track(slotKey, eventName, sponsor, options);
@@ -491,6 +518,10 @@ export class GrowthCatClient {
     return this.feedbackService.fetchBoard(type);
   }
 
+  async fetchFeedbackPage(options: FeedbackPageOptions = {}): Promise<FeedbackPage> {
+    return this.feedbackService.fetchPage(options);
+  }
+
   async voteFeedbackItem(itemId: string): Promise<FeedbackVoteResult> {
     return this.feedbackService.vote(itemId);
   }
@@ -515,10 +546,13 @@ export class GrowthCatClient {
 
   shutdown() {
     this.shutdownFlag = true;
+    this.api.shutdown();
     this.adService.shutdown();
     this.analyticsEventTracker.shutdown();
     this.sponsorEventTracker.shutdown();
     this.attributionService.shutdown();
+    this.measurement.shutdown();
+    this.configListeners.clear();
     if (typeof document !== "undefined") {
       document.removeEventListener("visibilitychange", this.onVisibilityChange);
     }
@@ -543,6 +577,7 @@ export class GrowthCatClient {
       this.recordSessionStarted("resumed");
     }
     this.hiddenAt = null;
+    if (!this.sessionEventRecorded) this.recordSessionStarted("initial");
   };
 
   private recordSessionStarted(reason: "initial" | "resumed"): void {
@@ -554,15 +589,18 @@ export class GrowthCatClient {
   }
 
   private async resolvedBootstrap(): Promise<GrowthCatSDKBootstrap> {
+    if (this.shutdownFlag) throw GrowthCatError.notInitialized();
     if (this.bootstrapCache) return this.bootstrapCache;
     return this.refreshSDKBootstrap();
   }
-}
 
-function currentCountryCode(): string | undefined {
-  try {
-    return new Intl.Locale(navigator.language).region ?? undefined;
-  } catch {
-    return undefined;
+  async flushEvents(): Promise<void> {
+    await Promise.all([this.analyticsEventTracker.flush(), this.adService.flush(), this.sponsorEventTracker.flush(), this.attributionService.flushQueuedEvents()]);
+  }
+
+  private requireUserId(): string {
+    const user = this.attributionService.getAppUserId();
+    if (!user) throw GrowthCatError.missingAppUserId();
+    return user;
   }
 }

@@ -1,3 +1,4 @@
+import { useViewableImpression } from "../hooks/useViewableImpression";
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import { useAd, UseAdOptions } from "../hooks/useAd";
 import {
@@ -51,7 +52,7 @@ export function GrowthCatAdInterstitial({
     if (isOpen && !hasOpened) setHasOpened(true);
   }, [isOpen, hasOpened]);
 
-  const { ad, state, error, trackEvent, reload } = useAd({
+  const { ad, state, error, trackEvent, reload, creativeInstanceId } = useAd({
     placementKey,
     format,
     appUserId,
@@ -62,7 +63,6 @@ export function GrowthCatAdInterstitial({
     onNoFill,
     onError,
   });
-  const impressionSent = useRef(false);
   const openCountRef = useRef(0);
   const reloadRef = useRef(reload);
   reloadRef.current = reload;
@@ -72,39 +72,6 @@ export function GrowthCatAdInterstitial({
     if (openCountRef.current > 0) void reloadRef.current();
     openCountRef.current += 1;
   }, [hasOpened, isOpen]);
-
-  useEffect(() => {
-    if (!isOpen || !ad || impressionSent.current) return;
-    const durationMs = ad.creative.creativeType === "video" ? 2000 : 1000;
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    const start = () => {
-      if (timer != null || document.visibilityState !== "visible") return;
-      timer = setTimeout(() => {
-        timer = null;
-        if (document.visibilityState !== "visible" || impressionSent.current) return;
-        impressionSent.current = true;
-        trackEvent("impression", { visible_fraction: 1, visible_duration_ms: durationMs });
-      }, durationMs);
-    };
-    const stop = () => {
-      if (timer != null) clearTimeout(timer);
-      timer = null;
-    };
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === "visible") start();
-      else stop();
-    };
-    start();
-    document.addEventListener("visibilitychange", handleVisibilityChange);
-    return () => {
-      stop();
-      document.removeEventListener("visibilitychange", handleVisibilityChange);
-    };
-  }, [isOpen, ad, trackEvent]);
-
-  useEffect(() => {
-    if (!isOpen) impressionSent.current = false;
-  }, [isOpen]);
 
   const handleDismiss = useCallback(() => {
     if (ad) trackEvent("ad_closed");
@@ -132,6 +99,8 @@ export function GrowthCatAdInterstitial({
 
   return (
     <InterstitialModal
+      key={creativeInstanceId}
+      creativeInstanceId={creativeInstanceId}
       ad={ad}
       appUserId={appUserId}
       sessionId={sessionId}
@@ -147,6 +116,7 @@ export function GrowthCatAdInterstitial({
 // ─── Modal ────────────────────────────────────────────────────────────────────
 
 interface InterstitialModalProps {
+  creativeInstanceId: string;
   ad: AdObject;
   appUserId?: string;
   sessionId?: string;
@@ -161,6 +131,7 @@ interface InterstitialModalProps {
 }
 
 function InterstitialModal({
+  creativeInstanceId,
   ad,
   appUserId,
   sessionId,
@@ -185,11 +156,14 @@ function InterstitialModal({
 
   const [secondsViewed, setSecondsViewed] = useState(0);
   const [canClose, setCanClose] = useState(
-    requiredViewSeconds === 0 && (isSkippable || !isVideo)
+    !creative.publicAssetUrl || (requiredViewSeconds === 0 && (isSkippable || !isVideo))
   );
   const [mediaCompleted, setMediaCompleted] = useState(false);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const modalRef = useRef<HTMLDivElement>(null);
+  useViewableImpression(modalRef, creativeInstanceId, (fraction, duration) => {
+    trackEvent("impression", { visible_fraction: fraction, visible_duration_ms: duration });
+  }, isVideo ? 2000 : 1000);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const videoStartedRef = useRef(false);
   const videoQuartilesRef = useRef(new Set<number>());
@@ -199,6 +173,9 @@ function InterstitialModal({
     const startTimer = () => {
       if (intervalRef.current != null || document.visibilityState !== "visible") return;
       intervalRef.current = setInterval(() => {
+      const media = modalRef.current?.querySelector("video,img");
+      if (media instanceof HTMLVideoElement && (media.paused || media.ended || media.readyState < 2)) return;
+      if (media instanceof HTMLImageElement && (!media.complete || media.naturalWidth === 0)) return;
       setSecondsViewed((s) => {
         const next = s + 1;
         if (
@@ -228,6 +205,7 @@ function InterstitialModal({
   }, [isSkippable, isVideo, requiredViewSeconds, skippableAfter]);
 
   useEffect(() => {
+    const previousFocus = document.activeElement as HTMLElement | null;
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     const firstFocusable = modalRef.current?.querySelector<HTMLElement>(
@@ -236,6 +214,7 @@ function InterstitialModal({
     firstFocusable?.focus();
     return () => {
       document.body.style.overflow = previousOverflow;
+      previousFocus?.focus();
     };
   }, []);
 
@@ -245,12 +224,13 @@ function InterstitialModal({
     if (isRewarded && appUserId && !rewardValidationStartedRef.current) {
       rewardValidationStartedRef.current = true;
       void GrowthCat.shared.validateAdReward(ad, appUserId, {
+          creativeInstanceId,
           sessionId,
           viewedSeconds: secondsViewed,
           completed: isVideo ? mediaCompleted : secondsViewed >= rewardAfter,
         })
         .then((response) => {
-        if (response.rewardValidated) {
+        if (response.rewardValidated && response.accepted > 0 && !response.alreadyGranted) {
           onReward?.(response);
         }
         })
@@ -266,6 +246,7 @@ function InterstitialModal({
     onDismiss();
   }, [
     ad,
+    creativeInstanceId,
     appUserId,
     isRewarded,
     isVideo,
@@ -407,6 +388,7 @@ function InterstitialModal({
         <img
           src={creative.publicAssetUrl}
           alt=""
+          onError={handleVideoError}
           style={{
             maxWidth: "90%",
             maxHeight: "60vh",

@@ -46,6 +46,12 @@ export interface AttributionConfirmationOptions {
 }
 
 export interface GrowthCatReward {
+  id?: string;
+  ruleId?: string;
+  grantedAt?: string;
+  metadata?: Record<string, unknown>;
+  offerCode?: string;
+  offerCodeRedemptionUrl?: string;
   rewardType: string;
   featureKey?: string;
 }
@@ -53,6 +59,17 @@ export interface GrowthCatReward {
 export interface GrowthCatRewards {
   rewards: GrowthCatReward[];
   containsFeature(featureKey: string): boolean;
+}
+
+export interface GrowthCatRewardProgress {
+  ruleId: string;
+  campaignKey?: string;
+  triggerEvent: string;
+  requiredCount: number;
+  qualifiedCount: number;
+  rewardType: string;
+  featureKey: string;
+  granted: boolean;
 }
 
 // ─── API request shapes ───────────────────────────────────────────────────────
@@ -83,6 +100,10 @@ export interface AttributionResolveRequest {
 }
 
 export interface AttributionEventRequest {
+  sdk_event_id: string;
+  occurred_at: string;
+  session_id?: string;
+  measurement_mode: "essential" | "analytics";
   app_user_id: string;
   sdk_install_id: string;
   event_name: string;
