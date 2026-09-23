@@ -84,7 +84,7 @@ export class GrowthCatClient {
     });
     this.adService = new AdService(this.api, this.logger, this.measurement);
     this.attributionService = new AttributionService(this.api, this.logger, this.measurement);
-    this.acquisitionService = new AcquisitionService(this.api);
+    this.acquisitionService = new AcquisitionService(this.api, this.measurement);
     this.feedbackService = new FeedbackService(this.api, this.logger);
     this.analyticsEventTracker = new AnalyticsEventTracker(this.api, this.logger, this.measurement);
     this.sponsorEventTracker = new SponsorEventTracker(this.api, this.logger, this.measurement);

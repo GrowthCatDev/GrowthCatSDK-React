@@ -793,7 +793,6 @@ GrowthCat.clearAppUserId();
 ```
 
 ---
-
 ## Acquisition landing pages
 
 GrowthCat can power localized paid-acquisition landings while keeping one canonical campaign identity across the landing, Apple Campaign Links, the installed app, and RevenueCat.
@@ -807,6 +806,8 @@ const campaign = await GrowthCat.acquisition({
   slug: "de-padel-meta-video-01",
 });
 
+// Only after the host establishes consent or another valid legal basis:
+GrowthCat.setMeasurementMode("analytics");
 await campaign.trackLandingView();
 
 // Use this from your App Store CTA. Tracking is best-effort; navigation still happens.
@@ -834,6 +835,10 @@ return (
 ```
 
 The SDK does not generate Apple campaign tokens. GrowthCat Backend returns the authoritative `appleUrl`, already containing the canonical `ct` value and optional provider/custom-product-page parameters. Meta campaign names do not need to match GrowthCat; use the GrowthCat-generated landing URL as the ad destination.
+
+Acquisition events are optional analytics and are sent only in `measurementMode: "analytics"`. Apply this mode after the host establishes consent or another valid legal basis using `GrowthCat.setMeasurementMode("analytics")`. Campaign loading and App Store navigation work in every measurement mode. The React hook records the landing view automatically; headless integrations call `trackLandingView()` explicitly.
+
+`openAppStore()` starts a best-effort keepalive request and navigates immediately; its promise does not confirm event delivery. Direct `track()` and `trackLandingView()` calls await delivery and can reject. Acquisition events are not queued or retried by `flushEvents()`. The default session follows the client's analytics session and rotates on consent revocation; a supplied `sessionId` remains under the host's control.
 
 
 ## Feedback

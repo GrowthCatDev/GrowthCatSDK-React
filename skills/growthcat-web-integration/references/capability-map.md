@@ -66,7 +66,8 @@ against the installed package declarations.
 - React: `useAcquisitionCampaign(slug)`.
 - Headless: `GrowthCat.acquisition({ slug })` or `GrowthCat.shared.acquisition({ slug })`.
 - Render campaign-localized content from the returned config.
-- Use `trackLandingView()` once when the campaign page is shown.
+- Headless integrations call `trackLandingView()` once when the campaign page is shown; the React hook does this automatically.
+- Acquisition events require analytics measurement mode; loading and navigation work without analytics consent.
 - Use `openAppStore()` for the App Store CTA; it tracks the click and navigates to the backend-provided Apple URL.
 - Never construct `campaign_key`, Apple `ct`, provider token, or Custom Product Page URL in the host.
 - The ad-platform campaign name is not the join key; the GrowthCat campaign slug/key is authoritative.

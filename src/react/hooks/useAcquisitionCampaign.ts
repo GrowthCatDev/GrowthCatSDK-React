@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { GrowthCat } from "../../growthcat";
 import type { AcquisitionCampaign } from "../../models/acquisition";
 
@@ -23,29 +23,39 @@ export function useAcquisitionCampaign(
   const [campaign, setCampaign] = useState<AcquisitionCampaign | null>(null);
   const [isLoading, setIsLoading] = useState(options.enabled !== false);
   const [error, setError] = useState<Error | null>(null);
+  const requestIdRef = useRef(0);
 
   const reload = useCallback(async () => {
-    if (options.enabled === false) return;
-    setIsLoading(true);
+    const requestId = ++requestIdRef.current;
+    setCampaign(null);
     setError(null);
+    if (options.enabled === false) {
+      setIsLoading(false);
+      return;
+    }
+    setIsLoading(true);
     try {
       const next = await GrowthCat.shared.acquisition({
         slug,
         sessionId: options.sessionId,
       });
+      if (requestId !== requestIdRef.current) return;
       setCampaign(next);
       if (options.trackLandingView !== false) {
-        await next.trackLandingView();
+        // Optional measurement must not delay or invalidate usable campaign content.
+        void next.trackLandingView().catch(() => {});
       }
     } catch (value) {
+      if (requestId !== requestIdRef.current) return;
       setError(value instanceof Error ? value : new Error(String(value)));
     } finally {
-      setIsLoading(false);
+      if (requestId === requestIdRef.current) setIsLoading(false);
     }
   }, [slug, options.enabled, options.sessionId, options.trackLandingView]);
 
   useEffect(() => {
     void reload();
+    return () => { requestIdRef.current += 1; };
   }, [reload]);
 
   return {

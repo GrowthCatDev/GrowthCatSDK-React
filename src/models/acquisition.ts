@@ -1,3 +1,6 @@
+import { webUrl } from "../core/url";
+import { GrowthCatError } from "./errors";
+
 export interface AcquisitionCampaignConfig {
   campaignKey: string;
   slug: string;
@@ -25,16 +28,26 @@ export interface AcquisitionEventPayload {
 }
 
 export interface AcquisitionCampaign extends AcquisitionCampaignConfig {
+  /** Current analytics session, or the session ID supplied by the host. */
   sessionId: string;
+  /** Sends only in analytics mode; rejects if delivery fails. */
   trackLandingView(): Promise<void>;
+  /** Sends only in analytics mode; rejects if delivery fails. */
   track(eventName: "landing_view" | "app_store_click"): Promise<void>;
+  /** Navigates immediately with best-effort tracking; does not await delivery. */
   openAppStore(): Promise<void>;
 }
 
 export function parseAcquisitionCampaign(raw: Record<string, unknown>): AcquisitionCampaignConfig {
+  const campaignKey = stringOrUndefined(raw?.["campaign_key"]);
+  const slug = stringOrUndefined(raw?.["slug"]);
+  const appleUrl = webUrl(raw?.["apple_url"]);
+  if (!campaignKey?.trim() || !slug?.trim() || !appleUrl) {
+    throw GrowthCatError.server(502, "GrowthCat returned an invalid acquisition campaign.");
+  }
   return {
-    campaignKey: String(raw["campaign_key"] ?? ""),
-    slug: String(raw["slug"] ?? ""),
+    campaignKey,
+    slug,
     countryCode: stringOrUndefined(raw["country_code"]),
     language: stringOrUndefined(raw["language"]),
     segment: stringOrUndefined(raw["segment"]),
@@ -46,9 +59,9 @@ export function parseAcquisitionCampaign(raw: Record<string, unknown>): Acquisit
     eyebrow: stringOrUndefined(raw["eyebrow"]),
     ctaText: stringOrUndefined(raw["cta_text"]),
     screenshots: Array.isArray(raw["screenshots"])
-      ? raw["screenshots"].filter((value): value is string => typeof value === "string")
+      ? raw["screenshots"].map(webUrl).filter((value): value is string => value !== undefined)
       : [],
-    appleUrl: String(raw["apple_url"] ?? ""),
+    appleUrl,
   };
 }
 

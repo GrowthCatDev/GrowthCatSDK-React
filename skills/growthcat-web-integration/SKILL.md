@@ -118,7 +118,7 @@ When the host page is a paid-acquisition landing, prefer the SDK acquisition sur
 1. Initialize GrowthCat once using the app's public SDK key.
 2. Load the backend-generated slug with `GrowthCat.acquisition({ slug })` or `useAcquisitionCampaign(slug)`.
 3. Render copy and assets from the returned campaign where the page is campaign-driven.
-4. Let the SDK emit `landing_view`; use `openAppStore()` for the CTA so it emits `app_store_click` and navigates to the authoritative Apple URL.
+4. The React hook emits `landing_view` automatically; headless integrations call `trackLandingView()` explicitly. Use `openAppStore()` for the CTA so it starts best-effort click tracking and navigates immediately to the authoritative Apple URL. Acquisition events require `measurementMode: "analytics"` after the host establishes consent or another valid legal basis.
 5. Do not construct `campaign_key`, Apple `ct`, provider token, or Custom Product Page parameters in the host app.
 6. Meta/ad-platform display names are not join keys. The GrowthCat campaign URL/key is authoritative.
 7. Keep an organic/generic fallback when campaign configuration cannot load.
