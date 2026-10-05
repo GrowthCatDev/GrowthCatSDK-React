@@ -90,3 +90,56 @@ against the installed package declarations.
 - Bootstrap exposes referral flags and ads configuration through the client.
 - A sandbox/live mismatch or missing dashboard placement is a configuration
   issue; do not hide it with hardcoded fallbacks.
+
+## Friend programs and unified referral entry
+
+Core: `GrowthCat.shared.referralPrograms()`, `referralState(programId?)`,
+`referralInvite(programId)`, `enrollReferral({ programId, token })`,
+`applyReferralCode(code, mode = "both")`.
+React: `useReferralCode({ mode })`, `GrowthCatReferralCodeForm`,
+`useFriendReferrals(programId?)`, `GrowthCatFriendReferralPanel`.
+Modes: `influencers`, `friends`, `both`; classify before any validation or
+enrollment effect. Return kinds are `influencer` and `friend` with their typed
+payloads. Program/invite availability uses `acceptingNewReferrals` and
+`availabilityReason`. Progress and rewards use camelCase public fields and
+stable milestone IDs. Keep earned rewards visible at quotas and on paused
+programs. Code acceptance does not grant entitlement locally.
+
+Identity: initialize with `identityTokenProvider(request)` returning a signed
+server token; set `GrowthCat.setAppUserId(user.id)` on authenticated identity,
+clear on sign-out. Provider requests include `appUserId`, `scope` and
+`forceRefresh` (one refresh after 401). Never embed a personal account/MCP key
+or let the browser select an arbitrary identity for server signing.
+
+## Paid-ad website arrival
+
+Core: `GrowthCat.shared.captureWebArrival(url?)`, `.webArrival`,
+`.subscribeWebArrival(listener)`; namespace convenience
+`GrowthCat.captureWebArrival(url?)`. Optional initialize setting
+`captureWebAttributionOnLoad: true`; default false.
+React: `useWebAttribution({ enabled?, url? })`, no provider required.
+The host establishes analytics consent before capture persists or claims a
+token. Trust `gc_token` returned through a GrowthCat campaign redirect, never
+fabricate claims from UTM strings. Unsigned/no-user arrivals remain pending
+until identity exists; same-origin `sessionStorage` retains the token for
+seven days. Clear identity on account switch. Result kind `web_arrival` is
+not a mobile install.
+
+Acquisition config: `destinationType: "app_store" | "web"`, `targetUrl`,
+optional `appleUrl`; `openDestination()` picks `web_click` or
+`app_store_click`. Existing `openAppStore()` needs a valid Apple URL.
+
+### Reusable referral settings UI
+
+`GrowthCatFriendReferralPanel` supports single, repeating and tiered goals using
+server progress. Its `strings` prop accepts `Partial<GrowthCatFriendReferralPanelStrings>`
+with dynamic count/benefit/status callbacks; `style`, `className`, and `title` adapt
+presentation. Prefer it for standard settings UI; use `useFriendReferrals` for
+custom designs, including `isCreatingInvite` request state. Sharing uses the
+server-generated link with clipboard/native share and selectable fallback.
+Never hardcode thresholds or describe a pending reward as delivered.
+
+For usable delivered rewards, `onSelectOffering(offeringId, reward)` presents a
+host paywall and `renderReward(reward)` renders custom-benefit details. The panel
+filters simulated, pending and expired rewards before invoking either callback.
+Keep provider entitlement verification in the host; an offering selects a paywall.

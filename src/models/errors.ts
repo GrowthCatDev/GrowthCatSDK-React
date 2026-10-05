@@ -2,6 +2,8 @@ export type GrowthCatErrorCode =
   | "not_initialized"
   | "missing_app_user_id"
   | "invalid_code"
+  | "referral_code_type_not_allowed"
+  | "plan_limit_reached"
   | "app_setup_incomplete"
   | "unauthorized"
   | "rate_limited"
@@ -19,6 +21,7 @@ export class GrowthCatError extends Error {
   readonly statusCode?: number;
   readonly retryAfter?: number;
   readonly requirements?: AppSetupRequirements;
+  readonly planLimit?: { meter?: string; limit?: number; used?: number; resetAt?: string };
 
   constructor(
     code: GrowthCatErrorCode,
@@ -27,6 +30,7 @@ export class GrowthCatError extends Error {
       statusCode?: number;
       retryAfter?: number;
       requirements?: AppSetupRequirements;
+      planLimit?: GrowthCatError["planLimit"];
     }
   ) {
     super(message);
@@ -35,6 +39,7 @@ export class GrowthCatError extends Error {
     this.statusCode = options?.statusCode;
     this.retryAfter = options?.retryAfter;
     this.requirements = options?.requirements;
+    this.planLimit = options?.planLimit;
   }
 
   static notInitialized() {

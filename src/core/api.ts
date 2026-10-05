@@ -1,3 +1,4 @@
+import { parseReferralClassification, parseReferralProgram, parseReferralState, parseReferralInvite, parseReferralEnrollment } from "../models/friend-referrals";
 import { GrowthCatConfiguration, GrowthCatDeliveryStatus, GrowthCatIdentityRequest } from "./config";
 import { installId, makeIdentityScope, scopedStorageKey } from "./install-id";
 import { webUrl } from "./url";
@@ -131,6 +132,26 @@ export class ApiClient {
           : undefined,
       },
     };
+  }
+
+  async referralPrograms(appUserId: string) {
+    const raw = await this.request<{ programs: Record<string, unknown>[] }>("GET", `/v1/referrals/programs?${new URLSearchParams({ app_user_id: appUserId })}`);
+    return raw.programs.map(parseReferralProgram);
+  }
+  async referralState(appUserId: string, programId?: string) {
+    const params = new URLSearchParams({ app_user_id: appUserId });
+    if (programId) params.set("program_id", programId);
+    return parseReferralState(await this.request("GET", `/v1/referrals/state?${params}`));
+  }
+  async referralInvite(appUserId: string, programId: string) {
+    const raw = await this.request<{ invite: Record<string, unknown> }>("POST", "/v1/referrals/invite", { app_user_id: appUserId, program_id: programId });
+    return parseReferralInvite(raw.invite);
+  }
+  async enrollReferral(appUserId: string, programId: string, token: string) {
+    return parseReferralEnrollment(await this.request("POST", "/v1/referrals/enroll", { app_user_id: appUserId, program_id: programId, token }));
+  }
+  async classifyReferralCode(appUserId: string, code: string) {
+    return parseReferralClassification(await this.request("POST", "/v1/referrals/resolve-code", { app_user_id: appUserId, code }));
   }
 
   async recordReferralClick(body: ReferralClickRequest): Promise<void> {
@@ -492,7 +513,7 @@ export class ApiClient {
   private async request<T>(method: HttpMethod, path: string, body?: unknown, refreshed = false): Promise<T> {
     if (this.stopped) throw GrowthCatError.notInitialized();
     const url = `${this.config.baseUrl}${path}`;
-    const measurement = /\/events(?:\/batch)?$|\/referrals\/click$/.test(path);
+    const measurement = /\/events(?:\/batch)?$|\/referrals\/click$/.test(path) || path.startsWith("/v1/attribution/");
     const generation = this.measurementGeneration;
     const headers: Record<string, string> = {
       Accept: "application/json", "x-growthcat-key": this.config.apiKey,
@@ -546,10 +567,15 @@ export class ApiClient {
     const message = typeof payload.message === "string" ? payload.message :
       typeof payload.error === "string" ? payload.error : this.extractNestedErrorMessage(payload);
     if (response.status === 401 && !refreshed && this.identityRequest(path, body, true)) return this.request(method, path, body, true);
+    if (message === "plan_limit_reached") throw new GrowthCatError("plan_limit_reached", "New referrals are temporarily unavailable. Your earned rewards remain available.", {
+      statusCode: response.status, planLimit: { meter: typeof payload.meter === "string" ? payload.meter : undefined,
+        limit: typeof payload.limit === "number" ? payload.limit : undefined, used: typeof payload.used === "number" ? payload.used : undefined,
+        resetAt: typeof payload.reset_at === "string" ? payload.reset_at : undefined }
+    });
     if (response.status === 401) throw GrowthCatError.unauthorized(message);
     if (response.status === 429) {
       const raw = response.headers.get("Retry-After");
-      const seconds = raw == null ? undefined : /^\\d+(\\.\\d+)?$/.test(raw) ? Number(raw) : (Date.parse(raw) - Date.now()) / 1000;
+      const seconds = raw == null ? undefined : /^\d+(\.\d+)?$/.test(raw) ? Number(raw) : (Date.parse(raw) - Date.now()) / 1000;
       throw GrowthCatError.rateLimited(Number.isFinite(seconds) ? Math.max(0, seconds!) : undefined);
     }
     if (message === "app_setup_incomplete" || payload.code === "app_setup_incomplete" || payload.error === "app_setup_incomplete") {
@@ -567,9 +593,10 @@ export class ApiClient {
 
   private identityRequest(path: string, body: unknown, forceRefresh: boolean): GrowthCatIdentityRequest | null {
     const url = new URL(path, this.config.baseUrl);
-    const feedbackUser = (body as { external_user_id?: string } | undefined)?.external_user_id;
+    const feedbackUser = (body as { external_user_id?: string } | undefined)?.external_user_id ?? url.searchParams.get("viewer_external_user_id");
     if (url.pathname.includes("/feedback/") && feedbackUser) return { appUserId: feedbackUser, scope: "user", forceRefresh };
     if (!url.pathname.startsWith("/v1/attribution/") && !url.pathname.startsWith("/v1/rewards") &&
+        !(url.pathname.startsWith("/v1/referrals/") && url.pathname !== "/v1/referrals/click") &&
         url.pathname !== "/v1/events" && url.pathname !== "/v1/ads/reward/validate") return null;
     const input = (body ?? {}) as Record<string, unknown>;
     const appUserId = String(input.app_user_id ?? url.searchParams.get("app_user_id") ?? "");
@@ -667,6 +694,7 @@ function requiredString(
 
 function parseAttributionAssignment(raw: Record<string, unknown>): AttributionAssignment {
   return {
+    platform: typeof raw.platform === "string" ? raw.platform as AttributionAssignment["platform"] : undefined,
     token: raw["token"] as string | undefined,
     sourceType: raw["source_type"] as string | undefined,
     campaignKey: raw["campaign_key"] as string | undefined,

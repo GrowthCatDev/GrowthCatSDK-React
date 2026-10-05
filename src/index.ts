@@ -100,3 +100,9 @@ export type { GrowthCatMeasurementMode } from "./core/privacy";
 
 // ─── Utils ────────────────────────────────────────────────────────────────────
 export { makeSessionId, makeCreativeInstanceId, installId } from "./core/install-id";
+
+export type { GrowthCatReferralCodeMode, GrowthCatReferralCodeKind, GrowthCatReferralCodeResult, ReferralAvailability, ReferralRewardSpec, ReferralMilestone, ReferralProgram, ReferralMilestoneProgress, ReferralProgress, ReferralReward, ReferralState, ReferralInvite, ReferralEnrollment, ReferralEnrollmentResult, ReferralCodeClassification } from "./models/friend-referrals";
+
+export type { WebAttributionState } from "./services/web-arrival-service";
+
+export { isReferralRewardUsable, referralRewardRedemptionUrl } from "./models/friend-referrals";

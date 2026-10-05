@@ -14,6 +14,7 @@ export interface UseAcquisitionCampaignResult {
   error: Error | null;
   reload(): Promise<void>;
   openAppStore(): Promise<void>;
+  openDestination(): Promise<void>;
 }
 
 export function useAcquisitionCampaign(
@@ -63,6 +64,10 @@ export function useAcquisitionCampaign(
     isLoading,
     error,
     reload,
+    openDestination: async () => {
+      if (!campaign) throw new Error("[GrowthCat] acquisition campaign is not loaded.");
+      await campaign.openDestination();
+    },
     openAppStore: async () => {
       if (!campaign) throw new Error("[GrowthCat] acquisition campaign is not loaded.");
       await campaign.openAppStore();

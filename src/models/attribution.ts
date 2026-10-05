@@ -16,6 +16,7 @@ export interface AttributionLink {
 }
 
 export interface AttributionAssignment {
+  platform?: "ios" | "android" | "web" | "macos" | "tvos" | "watchos";
   token?: string;
   sourceType?: string;
   campaignKey?: string;
@@ -83,6 +84,8 @@ export interface AttributionShareLinkRequest {
 }
 
 export interface AttributionClaimRequest {
+  platform?: "web";
+  metadata?: Record<string, unknown>;
   app_user_id: string;
   sdk_install_id: string;
   session_id?: string;

@@ -85,6 +85,7 @@ export class AttributionService {
 
     const appUserId = this.requireAppUserId();
     return this.api.claimAttribution({
+      platform: "web", metadata: { growthcat_platform: "web" },
       app_user_id: appUserId,
       sdk_install_id: this.api.installId,
       token,
@@ -106,6 +107,7 @@ export class AttributionService {
       // click converts in analytics; assert "probabilistic" honestly — the server never
       // upgrades a downgraded match_type to reward-eligible.
       await this.api.claimAttribution({
+      platform: "web", metadata: { growthcat_platform: "web" },
         app_user_id: appUserId,
         sdk_install_id: this.api.installId,
         session_id: sessionId,
@@ -133,6 +135,7 @@ export class AttributionService {
     // A touchpoint id from resolve makes this a confirmed referral; a bare token is an
     // explicit token claim. Both are reward-eligible server-side.
     return this.api.claimAttribution({
+      platform: "web", metadata: { growthcat_platform: "web" },
       app_user_id: appUserId,
       sdk_install_id: this.api.installId,
       session_id: options.sessionId,

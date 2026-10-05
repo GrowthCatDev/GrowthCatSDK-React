@@ -122,3 +122,30 @@ When the host page is a paid-acquisition landing, prefer the SDK acquisition sur
 5. Do not construct `campaign_key`, Apple `ct`, provider token, or Custom Product Page parameters in the host app.
 6. Meta/ad-platform display names are not join keys. The GrowthCat campaign URL/key is authoritative.
 7. Keep an organic/generic fallback when campaign configuration cannot load.
+
+## Friend programs and website arrivals
+
+For friend or combined code entry, read the matching SDK
+`docs/friend-referrals.md` and the referral section in the capability map.
+Use `applyReferralCode(code, mode)` / `GrowthCatReferralCodeForm` with the
+requested `influencers`, `friends` or `both` mode. Existing `useReferral` and
+`GrowthCatReferralForm` are influencer-only compatibility surfaces. Render
+server milestones and effective availability; preserve earned rewards while
+fresh enrollment/sharing is unavailable. Never infer subscription access from
+code acceptance or a RevenueCat offering ID.
+
+For ads targeting a website, read `docs/web-attribution.md`. Use a backend web
+campaign and its generated destination token, capture on appearance through
+`captureWebArrival` or `useWebAttribution`, and configure the signed identity
+provider. Keep pending campaign state through sign-in and clear account state
+on sign-out. Honor analytics consent before storing or claiming an arrival;
+UTM labels alone are not authoritative attribution. Report web arrivals
+separately from mobile installs. Use `openDestination` for website/App Store
+landing CTAs and preserve `openAppStore` only where an Apple URL exists.
+
+For a standard referral settings center, use `GrowthCatFriendReferralPanel`:
+its single/repeat/tier goals follow server rules and its Copy/Share actions use
+the generated invitation. Adapt `strings`, `style` and `className` to the host.
+Connect `onSelectOffering` to the host paywall and `renderReward` to delivered
+custom-benefit UI only when required. These callbacks receive usable delivered
+benefits; an offering does not grant a trial or subscription locally.

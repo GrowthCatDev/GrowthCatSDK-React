@@ -45,6 +45,10 @@ export function useFeedbackBoard(options: UseFeedbackBoardOptions = {}): UseFeed
   const load = useCallback(async () => {
     const loadId = ++loadIdRef.current;
     setIsLoading(true);
+    setItems([]);
+    pendingVotesRef.current = new Set();
+    loadingMoreRef.current = false;
+    setIsLoadingMore(false);
     setNextCursor(null);
     setError(null);
     try {
@@ -76,19 +80,33 @@ export function useFeedbackBoard(options: UseFeedbackBoardOptions = {}): UseFeed
       setNextCursor(page.nextCursor === nextCursor ? null : page.nextCursor);
     } catch (cause) {
       if (loadId === loadIdRef.current) setError(toGrowthCatError(cause));
-    } finally { loadingMoreRef.current = false; setIsLoadingMore(false); }
+    } finally {
+      if (loadId === loadIdRef.current) { loadingMoreRef.current = false; setIsLoadingMore(false); }
+    }
   }, [nextCursor, options.type, isLoading]);
 
   useEffect(() => {
-    if (options.autoLoad !== false) void load();
-    return () => {
+    const resetIdentity = () => {
       loadIdRef.current += 1;
+      pendingVotesRef.current = new Set();
+      loadingMoreRef.current = false;
+      setItems([]);
+      setNextCursor(null);
+      setError(null);
+      setIsLoading(false);
+      setIsLoadingMore(false);
+      if (options.autoLoad !== false) void load();
     };
+    const unsubscribe = GrowthCat.shared.feedbackService.subscribeIdentity(resetIdentity);
+    resetIdentity();
+    return () => { unsubscribe(); loadIdRef.current += 1; };
   }, [load, options.autoLoad]);
 
   const vote = useCallback(async (itemId: string): Promise<FeedbackVoteResult | null> => {
     if (pendingVotesRef.current.has(itemId)) return null;
-    pendingVotesRef.current.add(itemId);
+    const pendingVotes = pendingVotesRef.current;
+    const loadId = loadIdRef.current;
+    pendingVotes.add(itemId);
     let previousItem: FeedbackBoardItem | undefined;
     setItems((prev) => prev.map((item) => {
       if (item.itemId !== itemId) return item;
@@ -101,6 +119,7 @@ export function useFeedbackBoard(options: UseFeedbackBoardOptions = {}): UseFeed
     }));
     try {
       const result = await GrowthCat.shared.voteFeedbackItem(itemId);
+      if (loadId !== loadIdRef.current) return null;
       setItems((prev) =>
         prev.map((i) =>
           i.itemId === itemId ? { ...i, hasVoted: result.hasVoted, voteCount: result.voteCount } : i
@@ -108,6 +127,7 @@ export function useFeedbackBoard(options: UseFeedbackBoardOptions = {}): UseFeed
       );
       return result;
     } catch (cause) {
+      if (loadId !== loadIdRef.current) return null;
       // Revert optimistic update
       setItems((prev) =>
         prev.map((i) =>
@@ -117,13 +137,15 @@ export function useFeedbackBoard(options: UseFeedbackBoardOptions = {}): UseFeed
       setError(toGrowthCatError(cause));
       return null;
     } finally {
-      pendingVotesRef.current.delete(itemId);
+      pendingVotes.delete(itemId);
     }
   }, []);
 
   const unvote = useCallback(async (itemId: string): Promise<FeedbackVoteResult | null> => {
     if (pendingVotesRef.current.has(itemId)) return null;
-    pendingVotesRef.current.add(itemId);
+    const pendingVotes = pendingVotesRef.current;
+    const loadId = loadIdRef.current;
+    pendingVotes.add(itemId);
     let previousItem: FeedbackBoardItem | undefined;
     setItems((prev) => prev.map((item) => {
       if (item.itemId !== itemId) return item;
@@ -136,6 +158,7 @@ export function useFeedbackBoard(options: UseFeedbackBoardOptions = {}): UseFeed
     }));
     try {
       const result = await GrowthCat.shared.unvoteFeedbackItem(itemId);
+      if (loadId !== loadIdRef.current) return null;
       setItems((prev) =>
         prev.map((i) =>
           i.itemId === itemId ? { ...i, hasVoted: result.hasVoted, voteCount: result.voteCount } : i
@@ -143,6 +166,7 @@ export function useFeedbackBoard(options: UseFeedbackBoardOptions = {}): UseFeed
       );
       return result;
     } catch (cause) {
+      if (loadId !== loadIdRef.current) return null;
       setItems((prev) =>
         prev.map((i) =>
           i.itemId === itemId && previousItem ? previousItem : i
@@ -151,7 +175,7 @@ export function useFeedbackBoard(options: UseFeedbackBoardOptions = {}): UseFeed
       setError(toGrowthCatError(cause));
       return null;
     } finally {
-      pendingVotesRef.current.delete(itemId);
+      pendingVotes.delete(itemId);
     }
   }, []);
 
@@ -173,17 +197,31 @@ export function useFeedbackSubmit(): UseFeedbackSubmitResult {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [result, setResult] = useState<FeedbackSubmitResult | null>(null);
   const [error, setError] = useState<GrowthCatError | null>(null);
+  const generationRef = useRef(0);
+
+  useEffect(() => {
+    const unsubscribe = GrowthCat.shared.feedbackService.subscribeIdentity(() => {
+      generationRef.current += 1;
+      setIsSubmitting(false);
+      setResult(null);
+      setError(null);
+    });
+    return () => { unsubscribe(); generationRef.current += 1; };
+  }, []);
 
   const submit = useCallback(
     async (submission: FeedbackSubmission): Promise<FeedbackSubmitResult | null> => {
+      const generation = ++generationRef.current;
       setIsSubmitting(true);
       setError(null);
       setResult(null);
       try {
         const r = await GrowthCat.shared.submitFeedback(submission);
+        if (generation !== generationRef.current) return null;
         setResult(r);
         return r;
       } catch (err) {
+        if (generation !== generationRef.current) return null;
         setError(
           err instanceof GrowthCatError
             ? err
@@ -191,13 +229,14 @@ export function useFeedbackSubmit(): UseFeedbackSubmitResult {
         );
         return null;
       } finally {
-        setIsSubmitting(false);
+        if (generation === generationRef.current) setIsSubmitting(false);
       }
     },
     []
   );
 
   const reset = useCallback(() => {
+    generationRef.current += 1;
     setIsSubmitting(false);
     setResult(null);
     setError(null);

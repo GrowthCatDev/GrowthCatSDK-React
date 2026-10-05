@@ -1,7 +1,7 @@
 {
 	"name": "@growthcat/web",
 	"version": "0.0.6",
-	"description": "GrowthCat Web SDK — referral codes, ads, sponsorships, attribution, and feedback for React and web apps.",
+	"description": "GrowthCat Web SDK \u2014 referral codes, ads, sponsorships, attribution, and feedback for React and web apps.",
 	"keywords": [
 		"growthcat",
 		"referral",
@@ -41,7 +41,8 @@
 		"typecheck": "tsc --noEmit",
 		"examples:check": "tsc -p tsconfig.examples.json",
 		"lint": "eslint src",
-		"check": "npm run typecheck && npm run examples:check && npm run lint && npm test"
+		"check": "npm run typecheck && npm run examples:check && npm run lint && npm test",
+		"test:browser": "npm run build && node tests/browser/run.cjs"
 	},
 	"peerDependencies": {
 		"react": ">=18.0.0",
@@ -69,7 +70,9 @@
 		"tsup": "^8.0.0",
 		"tsx": "^4.19.2",
 		"typescript": "^5.9.3",
-		"typescript-eslint": "^8.65.0"
+		"typescript-eslint": "^8.65.0",
+		"@playwright/test": "^1.61.1",
+		"esbuild": "^0.28.1"
 	},
 	"overrides": { "esbuild": "^0.28.1" },
 	"license": "MIT"

@@ -19,6 +19,8 @@ export interface GrowthCatDeliveryStatus {
 }
 
 export interface GrowthCatConfiguration {
+  /** Automatically capture gc_token website arrivals after analytics consent. */
+  captureWebAttributionOnLoad?: boolean;
   apiKey: string;
   baseUrl: string;
   environmentMode: GrowthCatEnvironmentMode;
@@ -31,6 +33,8 @@ export interface GrowthCatConfiguration {
 }
 
 export interface GrowthCatInitOptions {
+  /** Automatically capture gc_token website arrivals after analytics consent. */
+  captureWebAttributionOnLoad?: boolean;
   apiKey: string;
   environmentMode?: GrowthCatEnvironmentMode;
   /** Explicitly selects the backend workspace. Prefer this over `environmentMode`. */
@@ -97,6 +101,7 @@ export function buildConfiguration(options: GrowthCatInitOptions): GrowthCatConf
   const mode = options.environmentMode ?? "automatic";
   return {
     apiKey,
+    captureWebAttributionOnLoad: options.captureWebAttributionOnLoad ?? false,
     baseUrl: rawBaseUrl,
     environmentMode: mode,
     workspace: resolveWorkspace(mode, apiKey, options.workspace),

@@ -15,11 +15,13 @@ export interface AcquisitionCampaignConfig {
   eyebrow?: string;
   ctaText?: string;
   screenshots: string[];
-  appleUrl: string;
+  appleUrl?: string;
+  destinationType: "app_store" | "web";
+  targetUrl: string;
 }
 
 export interface AcquisitionEventPayload {
-  event_name: "landing_view" | "app_store_click";
+  event_name: "landing_view" | "app_store_click" | "web_click";
   session_id?: string;
   locale?: string;
   screen_width?: number;
@@ -33,16 +35,20 @@ export interface AcquisitionCampaign extends AcquisitionCampaignConfig {
   /** Sends only in analytics mode; rejects if delivery fails. */
   trackLandingView(): Promise<void>;
   /** Sends only in analytics mode; rejects if delivery fails. */
-  track(eventName: "landing_view" | "app_store_click"): Promise<void>;
+  track(eventName: "landing_view" | "app_store_click" | "web_click"): Promise<void>;
   /** Navigates immediately with best-effort tracking; does not await delivery. */
   openAppStore(): Promise<void>;
+  /** Opens the configured website or App Store destination. */
+  openDestination(): Promise<void>;
 }
 
 export function parseAcquisitionCampaign(raw: Record<string, unknown>): AcquisitionCampaignConfig {
   const campaignKey = stringOrUndefined(raw?.["campaign_key"]);
   const slug = stringOrUndefined(raw?.["slug"]);
   const appleUrl = webUrl(raw?.["apple_url"]);
-  if (!campaignKey?.trim() || !slug?.trim() || !appleUrl) {
+  const destinationType = raw?.destination_type === "web" ? "web" : "app_store";
+  const targetUrl = webUrl(raw?.target_url) ?? appleUrl;
+  if (!campaignKey?.trim() || !slug?.trim() || !targetUrl || (destinationType === "app_store" && !appleUrl)) {
     throw GrowthCatError.server(502, "GrowthCat returned an invalid acquisition campaign.");
   }
   return {
@@ -62,6 +68,8 @@ export function parseAcquisitionCampaign(raw: Record<string, unknown>): Acquisit
       ? raw["screenshots"].map(webUrl).filter((value): value is string => value !== undefined)
       : [],
     appleUrl,
+    destinationType,
+    targetUrl,
   };
 }
 

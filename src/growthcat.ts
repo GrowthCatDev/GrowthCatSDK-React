@@ -95,6 +95,9 @@ export const GrowthCat = {
     GrowthCat.shared.clearAppUserId();
   },
 
+  /** Capture a trusted campaign token on website arrival (analytics consent required). */
+  captureWebArrival(url?: string) { return GrowthCat.shared.captureWebArrival(url); },
+
   /** Loads a GrowthCat-managed acquisition landing campaign. */
   acquisition(options: { slug: string; sessionId?: string }) {
     return GrowthCat.shared.acquisition(options);

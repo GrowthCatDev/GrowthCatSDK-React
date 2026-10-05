@@ -1424,3 +1424,33 @@ The React entry point also exports these named types:
 ## iOS SDK
 
 This package is the web equivalent of the [GrowthCat iOS SDK](https://github.com/your-org/GrowthCatSDK-iOS) (Swift Package).
+
+## Friend referrals and website attribution
+
+Friend programs, stable invite codes, configurable milestones and delivered
+rewards are available through `referralPrograms`, `referralState`,
+`referralInvite`, `enrollReferral` and `applyReferralCode(code, mode)`.
+`mode` accepts `"influencers"`, `"friends"` or `"both"` (default). Use
+`GrowthCatReferralCodeForm`, `GrowthCatFriendReferralPanel`, `useReferralCode`
+and `useFriendReferrals` from `@growthcat/web/react`; existing influencer-only
+APIs remain supported. Read [friend referrals](docs/friend-referrals.md) for
+signed identity, availability and provider-backed reward handling.
+
+For Meta/TikTok ads targeting a website, configure a web acquisition
+campaign and capture its trusted `gc_token` on appearance with
+`captureWebArrival()` or `useWebAttribution()`. This records website arrival
+rather than mobile installation, respects analytics consent and retains a
+pending campaign through same-origin sign-in. Campaign landing pages use
+`destinationType`, `targetUrl` and `openDestination()` for either website or
+App Store destinations. Read [website attribution](docs/web-attribution.md).
+
+### Signed feedback reads
+
+When using `identifyFeedbackUser`, configure `identityTokenProvider` with short-lived user-scope JWTs issued by your authenticated app server. Both identified feedback reads and mutations require signed identity. The SDK keeps the viewer ID in the query and sends its credential in `X-GrowthCat-Identity`; tokens are never added to URLs. Anonymous browsing remains available without an external viewer ID. Account changes reload board personalization and discard earlier pending UI results. Roll out this SDK with the backend feedback identity update; older unsigned personalized reads receive 401.
+
+Browser regression coverage runs against the built package in Chromium, Firefox and WebKit: see [tests/browser/README.md](tests/browser/README.md). Run `npm run test:browser` after installing Playwright engines.
+
+The reusable friend referral settings panel renders single, repeated and tiered
+goals, remaining friends, delivered rewards and Copy/Share actions. Customize
+all labels and dynamic benefit/status copy with `strings`; see
+[friend referral UI configuration](docs/friend-referrals.md#settings-progress-and-sharing-component).

@@ -20,7 +20,7 @@ export class AcquisitionService {
     const config = await this.api.fetchAcquisitionCampaign(slug);
     const sessionId = () => options.sessionId ?? this.measurement.sessionId;
 
-    const track = async (eventName: "landing_view" | "app_store_click") => {
+    const track = async (eventName: "landing_view" | "app_store_click" | "web_click") => {
       if (!this.measurement.allowsOptionalAnalytics()) return;
       const payload: AcquisitionEventPayload = {
         event_name: eventName,
@@ -37,6 +37,10 @@ export class AcquisitionService {
       get sessionId() { return sessionId(); },
       track,
       trackLandingView: () => track("landing_view"),
+      openDestination: async () => {
+        void track(config.destinationType === "web" ? "web_click" : "app_store_click").catch(() => {});
+        if (typeof window !== "undefined") window.location.assign(config.targetUrl);
+      },
       openAppStore: async () => {
         if (!config.appleUrl) throw new Error("[GrowthCat] acquisition campaign is missing appleUrl.");
         // The API uses keepalive for events so navigation need not wait for delivery.

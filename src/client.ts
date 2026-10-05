@@ -1,3 +1,5 @@
+import { WebArrivalService, type WebAttributionState } from "./services/web-arrival-service";
+import type { GrowthCatReferralCodeMode, GrowthCatReferralCodeResult } from "./models/friend-referrals";
 import { GrowthCatConfiguration } from "./core/config";
 import { ApiClient } from "./core/api";
 import { GrowthCatDebugLogger } from "./core/logger";
@@ -60,6 +62,7 @@ export class GrowthCatClient {
   readonly adService: AdService;
   readonly attributionService: AttributionService;
   readonly acquisitionService: AcquisitionService;
+  private readonly webArrivalService: WebArrivalService;
   readonly feedbackService: FeedbackService;
   private readonly measurement: MeasurementState;
   private readonly analyticsEventTracker: AnalyticsEventTracker;
@@ -69,6 +72,8 @@ export class GrowthCatClient {
   private bootstrapCache: GrowthCatSDKBootstrap | null = null;
   private bootstrapPromise: Promise<GrowthCatSDKBootstrap> | null = null;
   private shutdownFlag = false;
+  private identityGeneration = 0;
+  private readonly identityListeners = new Set<() => void>();
   private hiddenAt: number | null = null;
   private sessionEventRecorded = false;
   private readonly configListeners = new Set<(config: GrowthCatSDKConfig) => void>();
@@ -85,10 +90,12 @@ export class GrowthCatClient {
     this.adService = new AdService(this.api, this.logger, this.measurement);
     this.attributionService = new AttributionService(this.api, this.logger, this.measurement);
     this.acquisitionService = new AcquisitionService(this.api, this.measurement);
+    this.webArrivalService = new WebArrivalService(this.api, this.measurement, () => this.appUserId);
     this.feedbackService = new FeedbackService(this.api, this.logger);
     this.analyticsEventTracker = new AnalyticsEventTracker(this.api, this.logger, this.measurement);
     this.sponsorEventTracker = new SponsorEventTracker(this.api, this.logger, this.measurement);
     this.startSessionTracking();
+    if (config.captureWebAttributionOnLoad) void this.captureWebArrival().catch(() => {});
   }
 
   get isConfigured(): boolean {
@@ -170,20 +177,23 @@ export class GrowthCatClient {
     if (!normalized) throw GrowthCatError.invalidCode("Please enter a referral code.");
     if (normalized.length > 128) throw GrowthCatError.invalidCode("Referral code must be 128 characters or fewer.");
 
+    const user = this.requireUserId(), generation = this.identityGeneration;
     const bootstrap = await this.resolvedBootstrap();
+    if (generation !== this.identityGeneration) throw GrowthCatError.network("Referral identity changed.");
     if (!bootstrap.sdkConfig.allowCodeRedeemExecution) {
       throw GrowthCatError.server(409, "Code redemption is currently disabled.");
     }
 
     const response = await this.api.validateCode({
       code: normalized,
-      app_user_id: this.requireUserId(),
+      app_user_id: user,
       session_id: this.measurement.allowsOptionalAnalytics() ? context?.sessionId ?? this.measurement.sessionId : undefined,
       source: context?.source,
       locale: typeof navigator !== "undefined" ? navigator.language : undefined,
       platform: "web",
     });
 
+    if (generation !== this.identityGeneration) throw GrowthCatError.network("Referral identity changed.");
     return {
       normalizedCode: response.normalized_code,
       campaign: {
@@ -192,6 +202,43 @@ export class GrowthCatClient {
         discountDescription: response.campaign.discount_description,
       },
     };
+  }
+
+  private async referralOperation<T>(operation: (user: string) => Promise<T>): Promise<T> {
+    const user = this.requireUserId(), generation = this.identityGeneration;
+    const result = await operation(user);
+    if (this.shutdownFlag || generation !== this.identityGeneration || user !== this.requireUserId()) {
+      throw GrowthCatError.network("Referral identity changed. Retry with the current account.");
+    }
+    return result;
+  }
+  get appUserId(): string | null { return this.attributionService.getAppUserId(); }
+  subscribeIdentity(listener: () => void): () => void { this.identityListeners.add(listener); return () => { this.identityListeners.delete(listener); }; }
+  referralPrograms() { return this.referralOperation(user => this.api.referralPrograms(user)); }
+  referralState(programId?: string) { return this.referralOperation(user => this.api.referralState(user, programId)); }
+  referralInvite(programId: string) { return this.referralOperation(user => this.api.referralInvite(user, programId)); }
+  enrollReferral(options: { programId: string; token: string }) {
+    return this.referralOperation(user => this.api.enrollReferral(user, options.programId, options.token));
+  }
+  async applyReferralCode(code: string, mode: GrowthCatReferralCodeMode = "both"): Promise<GrowthCatReferralCodeResult> {
+    if (!["influencers", "friends", "both"].includes(mode)) throw new TypeError("Invalid referral code mode.");
+    const input = code.trim();
+    if (!input || input.length > 2048) throw GrowthCatError.invalidCode();
+    const generation = this.identityGeneration;
+    return this.referralOperation(async user => {
+      const classified = await this.api.classifyReferralCode(user, input);
+      if (mode !== "both" && (mode === "friends" ? classified.kind !== "friend" : classified.kind !== "influencer")) {
+        throw new GrowthCatError("referral_code_type_not_allowed", mode === "friends" ? "Enter a friend's referral code." : "Enter an influencer code.");
+      }
+      // Check identity between classification and any enrollment/validation effect.
+      if (generation !== this.identityGeneration || user !== this.requireUserId()) throw GrowthCatError.network("Referral identity changed.");
+      if (classified.kind === "friend") {
+        return { kind: "friend", normalizedCode: classified.normalizedCode,
+          friend: await this.api.enrollReferral(user, classified.programId!, classified.token!) };
+      }
+      return { kind: "influencer", normalizedCode: classified.normalizedCode,
+        influencer: await this.validateReferralCode(classified.normalizedCode) };
+    });
   }
 
   async recordReferralClick(code: string, context?: GrowthCatAnalyticsContext): Promise<void> {
@@ -289,6 +336,11 @@ export class GrowthCatClient {
   setAppUserId(userId: string) {
     const previous = this.attributionService.getAppUserId();
     this.attributionService.setAppUserId(userId);
+    if (previous !== this.attributionService.getAppUserId()) {
+      this.identityGeneration++;
+      this.webArrivalService.identityChanged(previous);
+      for (const listener of this.identityListeners) listener();
+    }
     if (previous && previous !== this.attributionService.getAppUserId()) {
       this.analyticsEventTracker.clear();
       this.adService.eventTracker.clearOptionalEvents();
@@ -297,11 +349,18 @@ export class GrowthCatClient {
   }
 
   clearAppUserId() {
+    this.identityGeneration++;
+    this.webArrivalService.clear();
     this.analyticsEventTracker.clear();
     this.adService.eventTracker.clearOptionalEvents();
     this.measurement.rotateSession();
     this.attributionService.clearAppUserId();
+    for (const listener of this.identityListeners) listener();
   }
+
+  get webArrival(): WebAttributionState { return this.webArrivalService.state; }
+  captureWebArrival(url?: string) { return this.webArrivalService.capture(url); }
+  subscribeWebArrival(listener: (state: WebAttributionState) => void) { return this.webArrivalService.subscribe(listener); }
 
   async acquisition(options: { slug: string; sessionId?: string }): Promise<AcquisitionCampaign> {
     return this.acquisitionService.load(options);
@@ -559,8 +618,10 @@ export class GrowthCatClient {
     this.analyticsEventTracker.shutdown();
     this.sponsorEventTracker.shutdown();
     this.attributionService.shutdown();
+    this.webArrivalService.shutdown();
     this.measurement.shutdown();
     this.configListeners.clear();
+    this.identityListeners.clear();
     if (typeof document !== "undefined") {
       document.removeEventListener("visibilitychange", this.onVisibilityChange);
     }

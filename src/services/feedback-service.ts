@@ -28,6 +28,8 @@ export class FeedbackService {
   private slugPromise: Promise<string> | null = null;
   private readonly anonymousIdKey: string;
 
+  private readonly identityListeners = new Set<() => void>();
+  private identityGeneration = 0;
   user: FeedbackUser | null = null;
   theme: GrowthCatFeedbackTheme = DEFAULT_FEEDBACK_THEME;
   strings: GrowthCatFeedbackStrings = DEFAULT_FEEDBACK_STRINGS;
@@ -42,12 +44,34 @@ export class FeedbackService {
     this.anonymousId = this.loadOrCreateAnonId();
   }
 
+  subscribeIdentity(listener: () => void): () => void {
+    this.identityListeners.add(listener);
+    return () => { this.identityListeners.delete(listener); };
+  }
+
   identify(user: FeedbackUser) {
+    const changed = this.user?.id !== user.id;
     this.user = user;
+    if (changed) this.notifyIdentity();
   }
 
   clearUser() {
+    if (!this.user) return;
     this.user = null;
+    this.notifyIdentity();
+  }
+
+  private notifyIdentity() {
+    this.identityGeneration += 1;
+    for (const listener of this.identityListeners) listener();
+  }
+
+  private async resolveIdentity() {
+    const generation = this.identityGeneration;
+    const user = this.user;
+    const slug = await this.resolveSlug();
+    if (generation !== this.identityGeneration) throw GrowthCatError.network("Feedback identity changed.");
+    return { slug, userId: user?.id, anonymousId: user ? undefined : this.anonymousId };
   }
 
   setMetadata(metadata: Record<string, string>) {
@@ -73,25 +97,25 @@ export class FeedbackService {
   }
 
   async fetchBoard(type?: FeedbackType): Promise<FeedbackBoardItem[]> {
-    const slug = await this.resolveSlug();
-    return this.api.fetchFeedbackBoard(slug, type, this.user?.id, this.user ? undefined : this.anonymousId);
+    const { slug, userId, anonymousId } = await this.resolveIdentity();
+    return this.api.fetchFeedbackBoard(slug, type, userId, anonymousId);
   }
 
   async fetchPage(options: FeedbackPageOptions = {}): Promise<FeedbackPage> {
-    const slug = await this.resolveSlug();
-    return this.api.fetchFeedbackPage(slug, options, this.user?.id, this.user ? undefined : this.anonymousId);
+    const { slug, userId, anonymousId } = await this.resolveIdentity();
+    return this.api.fetchFeedbackPage(slug, options, userId, anonymousId);
   }
 
   async vote(itemId: string): Promise<FeedbackVoteResult> {
     if (!itemId.trim()) throw GrowthCatError.unknown("Feedback itemId must not be empty.");
-    const slug = await this.resolveSlug();
-    return this.api.voteFeedbackItem(slug, itemId.trim(), this.user?.id, this.user ? undefined : this.anonymousId);
+    const { slug, userId, anonymousId } = await this.resolveIdentity();
+    return this.api.voteFeedbackItem(slug, itemId.trim(), userId, anonymousId);
   }
 
   async unvote(itemId: string): Promise<FeedbackVoteResult> {
     if (!itemId.trim()) throw GrowthCatError.unknown("Feedback itemId must not be empty.");
-    const slug = await this.resolveSlug();
-    return this.api.unvoteFeedbackItem(slug, itemId.trim(), this.user?.id, this.user ? undefined : this.anonymousId);
+    const { slug, userId, anonymousId } = await this.resolveIdentity();
+    return this.api.unvoteFeedbackItem(slug, itemId.trim(), userId, anonymousId);
   }
 
   private async resolveSlug(): Promise<string> {
