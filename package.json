@@ -1,6 +1,6 @@
 {
 	"name": "@growthcat/web",
-	"version": "0.0.6",
+	"version": "0.0.7",
 	"description": "GrowthCat Web SDK \u2014 referral codes, ads, sponsorships, attribution, and feedback for React and web apps.",
 	"keywords": [
 		"growthcat",
@@ -28,7 +28,8 @@
 		}
 	},
 	"files": [
-		"dist"
+		"dist",
+		"CHANGELOG.md"
 	],
 	"publishConfig": {
 		"access": "public"
