@@ -151,6 +151,13 @@ export class GrowthCatClient {
         this.logger.logBootstrapSuccess();
         return bootstrap;
       })
+      .catch(error => {
+        if (this.bootstrapCache && !this.shutdownFlag) {
+          this.bootstrapCache.sdkConfig = { ...this.bootstrapCache.sdkConfig, friendReferralsEnabled: false };
+          for (const listener of this.configListeners) listener(this.bootstrapCache.sdkConfig);
+        }
+        throw error;
+      })
       .finally(() => {
         this.bootstrapPromise = null;
       });
@@ -216,7 +223,18 @@ export class GrowthCatClient {
   subscribeIdentity(listener: () => void): () => void { this.identityListeners.add(listener); return () => { this.identityListeners.delete(listener); }; }
   referralPrograms() { return this.referralOperation(user => this.api.referralPrograms(user)); }
   referralState(programId?: string) { return this.referralOperation(user => this.api.referralState(user, programId)); }
-  referralInvite(programId: string) { return this.referralOperation(user => this.api.referralInvite(user, programId)); }
+  referralInvite(programId: string) {
+    return this.referralOperation(async user => {
+      const generation = this.identityGeneration;
+      const config = await this.refreshSDKConfig();
+      if (!config.friendReferralsEnabled) throw new GrowthCatError("friend_referrals_disabled", "New friend referrals are temporarily unavailable.");
+      const state = await this.api.referralState(user, programId);
+      if (generation !== this.identityGeneration || this.shutdownFlag) throw GrowthCatError.network("Referral identity changed.");
+      if (!this.sdkConfig?.friendReferralsEnabled || !state.friendReferralsEnabled) throw new GrowthCatError("friend_referrals_disabled", "New friend referrals are temporarily unavailable.");
+      if (!state.programs.find(program => program.id === programId)?.acceptingNewReferrals) throw GrowthCatError.server(409, "New invitations are temporarily unavailable.");
+      return this.api.referralInvite(user, programId);
+    });
+  }
   enrollReferral(options: { programId: string; token: string }) {
     return this.referralOperation(user => this.api.enrollReferral(user, options.programId, options.token));
   }

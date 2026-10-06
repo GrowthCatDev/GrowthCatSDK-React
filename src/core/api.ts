@@ -572,6 +572,12 @@ export class ApiClient {
         limit: typeof payload.limit === "number" ? payload.limit : undefined, used: typeof payload.used === "number" ? payload.used : undefined,
         resetAt: typeof payload.reset_at === "string" ? payload.reset_at : undefined }
     });
+    const referralReason = ["friend_referrals_disabled", "referral_account_age_unverified",
+      "referral_account_age_exceeded", "referral_existing_account_ineligible"]
+      .find(reason => [payload.code, payload.error, message].includes(reason));
+    if (referralReason) throw new GrowthCatError(referralReason as GrowthCatError["code"],
+      referralReason === "friend_referrals_disabled" ? "New friend referrals are temporarily unavailable." :
+        "This account is not eligible to accept a friend referral.", { statusCode: response.status });
     if (response.status === 401) throw GrowthCatError.unauthorized(message);
     if (response.status === 429) {
       const raw = response.headers.get("Retry-After");

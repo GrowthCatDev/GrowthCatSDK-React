@@ -9,8 +9,9 @@ export interface GrowthCatReferralCodeFormProps extends UseReferralCodeOptions {
 /** Unified code entry; success means acceptance, never a local subscription grant. */
 export function GrowthCatReferralCodeForm(props: GrowthCatReferralCodeFormProps) {
   const id = useId(), [code, setCode] = useState("");
-  const { result, error, isLoading, applyCode } = useReferralCode(props);
-  const mode = props.mode ?? "both";
+  const { result, error, isLoading, applyCode, canEnterFriendCode } = useReferralCode(props);
+  const mode = props.mode === "influencers" || !canEnterFriendCode ? "influencers" : props.mode ?? "both";
+  if (props.mode === "friends" && !canEnterFriendCode) return null;
   const s = { title: "Have a referral code?", description: mode === "friends" ? "Enter a code from a friend." :
     mode === "influencers" ? "Enter an influencer code." : "Enter a code from an influencer or a friend.",
     placeholder: "Referral code", buttonText: "Apply code", buttonLoadingText: "Checking…", successMessage: "Code accepted.", ...props.strings };

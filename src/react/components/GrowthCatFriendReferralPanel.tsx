@@ -67,7 +67,7 @@ export interface GrowthCatFriendReferralPanelProps {
 }
 /** Rules come from the server, including single, repeated and tiered goals. */
 export function GrowthCatFriendReferralPanel({ programId, className, title, style, strings, onSelectOffering, renderReward }: GrowthCatFriendReferralPanelProps) {
-  const { state, invite, error, isLoading, isCreatingInvite, refresh, createInvite } = useFriendReferrals(programId);
+  const { state, invite, friendReferralsEnabled, canViewReferrals, error, isLoading, isCreatingInvite, refresh, createInvite } = useFriendReferrals(programId);
   const [shareMessage, setShareMessage] = useState("");
   const [selectingReward, setSelectingReward] = useState<string | null>(null);
   const [rewardError, setRewardError] = useState("");
@@ -94,6 +94,14 @@ export function GrowthCatFriendReferralPanel({ programId, className, title, styl
   async function share(url: string, name: string, useSheet: boolean) {
     setShareMessage("");
     try {
+      const client = GrowthCat.shared, owner = state?.appUserId;
+      const config = await client.refreshSDKConfig();
+      const fresh = await client.referralState(invite?.programId);
+      if (GrowthCat.shared !== client || client.appUserId !== owner || fresh.appUserId !== owner ||
+          !config.friendReferralsEnabled || !client.sdkConfig?.friendReferralsEnabled || !fresh.friendReferralsEnabled ||
+          !fresh.programs.find(program => program.id === invite?.programId)?.acceptingNewReferrals) {
+        setShareMessage(s.unavailable); return;
+      }
       if (useSheet && typeof navigator !== "undefined" && navigator.share) {
         await navigator.share({ title: name, url });
       } else if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
@@ -103,6 +111,7 @@ export function GrowthCatFriendReferralPanel({ programId, className, title, styl
       if (!(value instanceof Error && value.name === "AbortError")) setShareMessage(s.copyFailed);
     }
   }
+  if (state && !canViewReferrals && !error) return null;
   return <section className={className} aria-busy={isLoading} style={{ padding: 20, border: "1px solid #d1d5db", borderRadius: 12, ...style }}>
     <h3>{title ?? s.title}</h3>{error && <p role="alert">{error.message}</p>}
     {isLoading && !state && <p role="status">{s.loading}</p>}
@@ -123,9 +132,9 @@ export function GrowthCatFriendReferralPanel({ programId, className, title, styl
           <progress aria-label={s.milestone(threshold)} max={threshold} value={Math.min(qualified, threshold)} style={{ width: "100%" }} />
         </div>}
         {progress && <p>{progress.nextThreshold === null ? s.completed : s.remaining(progress.remainingCount)}</p>}
-        {program.acceptingNewReferrals ? <button type="button" style={buttonStyle} disabled={isCreatingInvite || isLoading} onClick={() => { void createInvite(program.id).catch(() => {}); }}>
+        {friendReferralsEnabled && program.acceptingNewReferrals ? <button type="button" style={buttonStyle} disabled={isCreatingInvite || isLoading} onClick={() => { void createInvite(program.id).catch(() => {}); }}>
           {isCreatingInvite ? s.gettingCode : s.getCode}</button> : <p>{s.unavailable}</p>}
-        {invite?.programId === program.id && program.acceptingNewReferrals && <div style={{ marginTop: 12 }}>
+        {invite?.programId === program.id && friendReferralsEnabled && program.acceptingNewReferrals && <div style={{ marginTop: 12 }}>
           <p>{s.code}: <strong>{invite.code}</strong></p>
           <label style={{ display: "block" }}>{s.link}<input aria-label={s.link} readOnly value={invite.url} style={{ display: "block", width: "100%", boxSizing: "border-box", padding: 8 }} onFocus={event => event.target.select()} /></label>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 8 }}>

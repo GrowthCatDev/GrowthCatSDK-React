@@ -2,9 +2,15 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { GrowthCat, GrowthCatError, isReferralRewardUsable, referralRewardRedemptionUrl } from "../dist/index.mjs";
 
+import { parseBootstrap } from "../src/models/bootstrap.ts";
+import { parseReferralProgram, parseReferralState } from "../src/models/friend-referrals.ts";
+
 const response = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
-function bootstrap() { return { sdk_config: { allow_code_redeem_execution: true }, readiness: { checks: {} }, ads: {} }; }
-function state(user = "friend") { return { app_user_id: user, programs: [], progress: [], rewards: [{ id: "reward", program_id: "program",
+function bootstrap() { return { sdk_config: { allow_code_redeem_execution: true, friend_referrals_enabled: true }, readiness: { checks: {} }, ads: {} }; }
+function program(overrides = {}) { return { id: "program", version: 1, name: "Friends", campaign_key: "friends", status: "active",
+  qualifying_event: "signup", friend_trigger_event: "signup", required_count: 5, frequency: "single",
+  accepting_new_referrals: true, can_enroll: true, inviter_reward: { enabled: false }, friend_reward: { enabled: false }, ...overrides }; }
+function state(user = "friend") { return { friend_referrals_enabled: true, app_user_id: user, programs: [program()], progress: [], rewards: [{ id: "reward", program_id: "program",
   side: "friend", milestone: 1, reward_type: "asc_offer_code", status: "fulfilled", offer_code: "APPLE123", offer_code_redemption_url: "javascript:bad()" }] }; }
 function init(fetcher, identityTokenProvider = async () => "signed-user") {
   globalThis.fetch = fetcher;
@@ -153,5 +159,93 @@ test("consent revocation preserves signed referral benefits and does not emit op
     assert.equal(calls.filter(call => call.path.endsWith("/referrals/click")).length, 0);
     assert.equal(calls.filter(call => !call.path.startsWith("/v1/referrals/") && call.path !== "/v1/sdk/config").length, optionalBefore);
     GrowthCat.shutdown();
+  }
+});
+
+
+test("remote friend flags and eligibility fail closed; policy defaults retain legacy null semantics", () => {
+  for (const value of [undefined, false, "true", 1, null]) {
+    assert.equal(parseBootstrap({ sdk_config: { friend_referrals_enabled: value } }).sdkConfig.friendReferralsEnabled, false);
+    assert.equal(parseReferralState({ ...state(), friend_referrals_enabled: value }).friendReferralsEnabled, false);
+    assert.equal(parseReferralProgram(program({ can_enroll: value })).canEnroll, false);
+  }
+  assert.equal(parseBootstrap(bootstrap()).sdkConfig.friendReferralsEnabled, true);
+  const defaults = parseReferralProgram(program({ can_enroll: undefined }));
+  assert.equal(defaults.canEnroll, false);
+  assert.equal(defaults.newUserMaxAgeDays, 7);
+  assert.equal(defaults.friendRewardOncePerUser, true);
+  const custom = parseReferralProgram(program({ new_user_max_age_days: null, friend_reward_once_per_user: false,
+    can_enroll: false, enrollment_ineligibility_reason: "referral_account_age_exceeded" }));
+  assert.equal(custom.newUserMaxAgeDays, null);
+  assert.equal(custom.friendRewardOncePerUser, false);
+  assert.equal(custom.enrollmentIneligibilityReason, "referral_account_age_exceeded");
+  assert.equal(parseReferralProgram(program({ new_user_max_age_days: 14 })).newUserMaxAgeDays, 14);
+  for (const value of [-1, 0, 2.5, 3651, "14"]) assert.equal(parseReferralProgram(program({ new_user_max_age_days: value })).newUserMaxAgeDays, 7);
+});
+
+test("new invite generation requires fresh config and state but inviter account age does not gate it", async () => {
+  for (const scenario of ["missing", "disabled", "state-disabled", "state-missing", "unavailable", "old-inviter", "eligible"]) {
+    let writes = 0;
+    init(async url => {
+      const path = new URL(url).pathname;
+      if (path === "/v1/sdk/config") return response({ ...bootstrap(), sdk_config: scenario === "missing" ? {} :
+        { friend_referrals_enabled: scenario !== "disabled" } });
+      if (path.endsWith("/state")) return response({ ...state(), friend_referrals_enabled: scenario === "state-missing" ? undefined : scenario !== "state-disabled",
+        programs: [program({ accepting_new_referrals: scenario !== "unavailable", can_enroll: scenario !== "old-inviter" })] });
+      writes++;
+      return response({ invite: { code: "VALID", token: "VALID", program_id: "program", url: "https://example.test/VALID", accepting_new_referrals: true } });
+    });
+    if (["old-inviter", "eligible"].includes(scenario)) {
+      assert.equal((await GrowthCat.shared.referralInvite("program")).code, "VALID"); assert.equal(writes, 1);
+    } else {
+      await assert.rejects(() => GrowthCat.shared.referralInvite("program")); assert.equal(writes, 0, scenario);
+    }
+    GrowthCat.shutdown();
+  }
+});
+
+test("failed config refresh closes new sharing while history and accepted enrollment retries survive", async () => {
+  let unavailable = false, invites = 0, enrollments = 0;
+  init(async url => {
+    const path = new URL(url).pathname;
+    if (path === "/v1/sdk/config") return unavailable ? response({ error: "unavailable" }, 503) : response(bootstrap());
+    if (path.endsWith("/state")) return response({ ...state(), friend_referrals_enabled: false });
+    if (path.endsWith("/resolve-code")) return response({ kind: "friend", normalized_code: "VALID", program_id: "program", token: "VALID" });
+    if (path.endsWith("/enroll")) { enrollments++; return response({ enrollment: { id: "existing", program_id: "program", eligibility_verified: true }, state: state() }); }
+    invites++; return response({});
+  });
+  await GrowthCat.ready();
+  const flags = [], unsubscribe = GrowthCat.shared.subscribeSDKConfig(config => flags.push(config.friendReferralsEnabled));
+  unavailable = true;
+  await assert.rejects(() => GrowthCat.shared.referralInvite("program"));
+  assert.equal(GrowthCat.shared.sdkConfig.friendReferralsEnabled, false);
+  assert.deepEqual(flags, [false]); assert.equal(invites, 0);
+  assert.equal((await GrowthCat.shared.referralState()).rewards[0].offerCode, "APPLE123");
+  assert.equal((await GrowthCat.shared.enrollReferral({ programId: "program", token: "VALID" })).enrollment.id, "existing");
+  assert.equal((await GrowthCat.shared.applyReferralCode("VALID", "friends")).kind, "friend");
+  assert.equal(enrollments, 2);
+  unsubscribe(); GrowthCat.shutdown();
+});
+
+test("server enrollment failures expose stable eligibility reasons even when message is localized", async () => {
+  for (const reason of ["friend_referrals_disabled", "referral_account_age_unverified", "referral_account_age_exceeded", "referral_existing_account_ineligible"]) {
+    init(async url => new URL(url).pathname === "/v1/sdk/config" ? response(bootstrap()) :
+      response({ code: reason, message: "Localized reason" }, 409));
+    await assert.rejects(() => GrowthCat.shared.enrollReferral({ programId: "program", token: "VALID" }), error => error.code === reason && error.statusCode === 409);
+    GrowthCat.shutdown();
+  }
+});
+
+
+test("history uses accepted enrollment evidence and meaningful legacy progress, not zero-count rows", () => {
+  const empty = { ...state(), friend_referrals_enabled: false, rewards: [], progress: [{
+    program_id: "program", campaign_key: "friends", frequency: "single", enrolled_count: 0, qualified_count: 0, earned_rewards: 0, milestones: []
+  }] };
+  assert.equal(parseReferralState(empty).hasReferralHistory, false);
+  assert.equal(parseReferralState({ ...empty, has_referral_history: true }).hasReferralHistory, true);
+  for (const value of [false, undefined, "true", 1]) assert.equal(parseReferralState({ ...empty, has_referral_history: value }).hasReferralHistory, false);
+  assert.equal(parseReferralState({ ...empty, rewards: state().rewards }).hasReferralHistory, true);
+  for (const field of ["enrolled_count", "qualified_count", "earned_rewards"]) {
+    assert.equal(parseReferralState({ ...empty, progress: [{ ...empty.progress[0], [field]: 1 }] }).hasReferralHistory, true, field);
   }
 });

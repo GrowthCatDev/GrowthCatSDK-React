@@ -3,12 +3,13 @@ import assert from "node:assert/strict";
 import React from "react";
 import TestRenderer, { act } from "react-test-renderer";
 import { GrowthCat } from "../dist/index.mjs";
-import { useReferralCode, GrowthCatFriendReferralPanel, useWebAttribution } from "../dist/react/index.mjs";
+import { useReferralCode, GrowthCatReferralCodeForm, GrowthCatFriendReferralPanel, useWebAttribution } from "../dist/react/index.mjs";
 const response = body => new Response(JSON.stringify(body), { headers: { "Content-Type": "application/json" } });
 function initialize() {
-  globalThis.fetch = async () => response({ sdk_config: {}, readiness: { checks: {} }, ads: {} });
+  globalThis.fetch = async () => response({ sdk_config: { friend_referrals_enabled: true }, readiness: { checks: {} }, ads: {} });
   GrowthCat.initialize({ apiKey: "gc_test_hooks", identityTokenProvider: async () => "signed" });
   GrowthCat.setAppUserId("first");
+  GrowthCat.shared.referralState = async () => simpleState();
 }
 
 test("referral hook clears stale results on code mode and account changes", async () => {
@@ -71,7 +72,7 @@ test("expired and consumed rewards retain history without a redemption action", 
 
 function simpleState(threshold = 5, nextThreshold = threshold) {
   const reward = { enabled: true, type: "revenuecat_entitlement", duration: { value: 1, unit: "months" } };
-  return { appUserId: "first", programs: [{ id: "p", name: "Friends", acceptingNewReferrals: true, requiredCount: threshold, inviterReward: reward, inviterMilestones: [] }],
+  return { friendReferralsEnabled: true, appUserId: "first", programs: [{ canEnroll: true, id: "p", name: "Friends", acceptingNewReferrals: true, requiredCount: threshold, inviterReward: reward, inviterMilestones: [] }],
     progress: [{ programId: "p", enrolledCount: 8, qualifiedCount: 7, requiredCount: threshold, nextThreshold, remainingCount: nextThreshold == null ? 0 : nextThreshold - 7, milestones: [] }], rewards: [] };
 }
 test("single and repeating goals show server thresholds, remaining friends and completion", async () => {
@@ -170,5 +171,84 @@ test("offering action rechecks reward availability and cannot publish after an a
   await act(async () => { GrowthCat.setAppUserId("second"); });
   await act(async () => { finishOld({ ...simpleState(), rewards: [usable] }); });
   assert.equal(selected, 0);
+  renderer.unmount(); GrowthCat.shutdown();
+});
+
+
+test("friend-only entry hides on missing eligibility or disabled flags and combined entry keeps influencers", async () => {
+  for (const scenario of ["enabled", "config-off", "state-off", "missing", "ineligible", "unavailable"]) {
+    initialize(); await GrowthCat.ready();
+    if (scenario === "config-off") {
+      globalThis.fetch = async () => response({ sdk_config: { friend_referrals_enabled: false } });
+      await GrowthCat.shared.refreshSDKConfig();
+    }
+    GrowthCat.shared.referralState = async () => {
+      if (scenario === "unavailable") throw new Error("Offline");
+      return { ...simpleState(), friendReferralsEnabled: scenario !== "state-off", programs: [{ ...simpleState().programs[0],
+        canEnroll: scenario === "missing" ? undefined : scenario !== "ineligible" }] };
+    };
+    let renderer;
+    await act(async () => { renderer = TestRenderer.create(React.createElement(GrowthCatReferralCodeForm, { mode: "friends" })); });
+    assert.equal(renderer.root.findAllByType("form").length, scenario === "enabled" ? 1 : 0, scenario);
+    await act(async () => { renderer.update(React.createElement(GrowthCatReferralCodeForm, { mode: "both" })); });
+    assert.equal(renderer.root.findAllByType("form").length, 1, scenario);
+    assert.ok(JSON.stringify(renderer.toJSON()).includes(scenario === "enabled" ? "influencer or a friend" : "Enter an influencer code"));
+    renderer.unmount(); GrowthCat.shutdown();
+  }
+});
+
+test("remote disable clears pending/current invitations but keeps earned reward actions", async () => {
+  initialize(); await GrowthCat.ready();
+  const reward = { id: "reward", programId: "p", status: "fulfilled", rewardType: "asc_offer_code", offerCode: "APPLE123", offerCodeRedemptionUrl: "https://apps.apple.com/redeem" };
+  GrowthCat.shared.referralState = async () => ({ ...simpleState(), rewards: [reward] });
+  let finish;
+  GrowthCat.shared.referralInvite = async () => new Promise(resolve => { finish = resolve; });
+  let renderer;
+  await act(async () => { renderer = TestRenderer.create(React.createElement(GrowthCatFriendReferralPanel)); });
+  await act(async () => { renderer.root.findAllByType("button").find(button => button.children[0] === "Get my invite code").props.onClick(); });
+  await act(async () => {
+    globalThis.fetch = async () => response({ sdk_config: { friend_referrals_enabled: false } });
+    await GrowthCat.shared.refreshSDKConfig();
+    finish({ programId: "p", acceptingNewReferrals: true, code: "LATE", url: "https://example.test/LATE" });
+  });
+  const text = JSON.stringify(renderer.toJSON());
+  assert.ok(text.includes("APPLE123")); assert.ok(!text.includes("LATE")); assert.ok(!text.includes("Get my invite code"));
+  assert.equal(renderer.root.findAllByType("a").length, 1);
+  renderer.unmount(); GrowthCat.shutdown();
+});
+
+test("copy rechecks account and current admission before exposing an existing invite", async () => {
+  initialize(); await GrowthCat.ready();
+  let state = simpleState(), copied = 0;
+  GrowthCat.shared.referralState = async () => state;
+  GrowthCat.shared.referralInvite = async () => ({ programId: "p", acceptingNewReferrals: true, code: "VALID", url: "https://example.test/VALID" });
+  const original = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+  Object.defineProperty(globalThis, "navigator", { configurable: true, value: { clipboard: { writeText: async () => { copied++; } } } });
+  let renderer;
+  try {
+    await act(async () => { renderer = TestRenderer.create(React.createElement(GrowthCatFriendReferralPanel)); });
+    await act(async () => { renderer.root.findAllByType("button").find(button => button.children[0] === "Get my invite code").props.onClick(); });
+    state = { ...simpleState(), friendReferralsEnabled: false };
+    await act(async () => { renderer.root.findAllByType("button").find(button => button.children[0] === "Copy invite link").props.onClick(); });
+    assert.equal(copied, 0);
+    assert.ok(JSON.stringify(renderer.toJSON()).includes("temporarily unavailable"));
+  } finally { renderer?.unmount(); GrowthCat.shutdown(); if (original) Object.defineProperty(globalThis, "navigator", original); else delete globalThis.navigator; }
+});
+
+
+test("disabled center remains visible for accepted users with zero counts and no reward", async () => {
+  initialize(); await GrowthCat.ready();
+  globalThis.fetch = async () => response({ sdk_config: { friend_referrals_enabled: false } });
+  await GrowthCat.shared.refreshSDKConfig();
+  let state = { ...simpleState(), friendReferralsEnabled: false, hasReferralHistory: false,
+    progress: [{ ...simpleState().progress[0], enrolledCount: 0, qualifiedCount: 0, earnedRewards: 0 }], rewards: [] };
+  GrowthCat.shared.referralState = async () => state;
+  let renderer;
+  await act(async () => { renderer = TestRenderer.create(React.createElement(GrowthCatFriendReferralPanel)); });
+  assert.equal(renderer.toJSON(), null);
+  state = { ...state, hasReferralHistory: true };
+  await act(async () => { renderer.unmount(); renderer = TestRenderer.create(React.createElement(GrowthCatFriendReferralPanel)); });
+  assert.ok(JSON.stringify(renderer.toJSON()).includes("Friends"));
+  assert.ok(!JSON.stringify(renderer.toJSON()).includes("Get my invite code"));
   renderer.unmount(); GrowthCat.shutdown();
 });

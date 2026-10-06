@@ -11,6 +11,8 @@ export interface GrowthCatSDKBootstrap {
 export interface GrowthCatSDKConfig {
   showCodeRedeemUI: boolean;
   allowCodeRedeemExecution: boolean;
+  /** New friend invitations and enrollment are disabled unless explicitly enabled. */
+  friendReferralsEnabled: boolean;
   sandboxEnabled?: boolean;
   defaultWorkspace?: string;
   allowedWorkspaces?: string[];
@@ -49,6 +51,7 @@ export function parseBootstrap(raw: Record<string, unknown>): GrowthCatSDKBootst
     sdkConfig: {
       showCodeRedeemUI: booleanValue(sdkConfigRaw["show_code_redeem_ui"] ?? false),
       allowCodeRedeemExecution: booleanValue(sdkConfigRaw["allow_code_redeem_execution"] ?? false),
+      friendReferralsEnabled: sdkConfigRaw["friend_referrals_enabled"] === true,
       sandboxEnabled: sdkConfigRaw["sandbox_enabled"] != null
         ? booleanValue(sdkConfigRaw["sandbox_enabled"])
         : undefined,

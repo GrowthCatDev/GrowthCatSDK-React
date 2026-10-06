@@ -35,7 +35,7 @@ const programs = await GrowthCat.shared.referralPrograms();
 const state = await GrowthCat.shared.referralState();
 const progress = state.progress.find(item => item.programId === programId);
 const program = state.programs.find(item => item.id === programId);
-if (program?.acceptingNewReferrals) {
+if (GrowthCat.shared.sdkConfig?.friendReferralsEnabled && state.friendReferralsEnabled && program?.acceptingNewReferrals) {
   const invite = await GrowthCat.shared.referralInvite(programId);
   if (invite.acceptingNewReferrals) renderInvite(invite.code, invite.url);
 }
@@ -64,6 +64,12 @@ import { GrowthCatReferralCodeForm, GrowthCatFriendReferralPanel }
 <GrowthCatFriendReferralPanel programId={programId} />
 ```
 
+The unified form hides friend-only entry unless remote config and referral state
+are enabled and at least one program has `canEnroll: true`. Combined entry keeps
+influencer entry available when friend admission is unavailable. The hook exposes
+`friendReferralsEnabled` and `canEnterFriendCode` for custom forms. Eligibility
+is server supplied, with missing eligibility treated as false.
+
 The unified form works in onboarding or settings and lets you replace strings
 and colors. `useReferralCode({ mode })` provides `applyCode`, result, error,
 loading and reset for your own form. `useFriendReferrals(programId?)` provides
@@ -77,9 +83,45 @@ Render milestones from `progress.milestones` and `program.inviterMilestones`.
 Progress includes enrolled/qualified counts, remaining counts, earned states and
 stable reward IDs. Paused or quota-exhausted programs can keep previously
 accepted participants and earned rewards visible. Hide fresh sharing when
-`acceptingNewReferrals` is false; `availabilityReason` explains the effective
+`friendReferralsEnabled` or `acceptingNewReferrals` is false; `availabilityReason` explains the effective
 state without changing program status. Refresh before sharing and handle a
 server rejection if availability changes while the UI is open.
+
+## Remote availability and account eligibility
+
+`GrowthCatSDKConfig.friendReferralsEnabled` maps to `friend_referrals_enabled`;
+only an explicit `true` enables new friend surfaces. Missing, malformed or
+unavailable config fails closed. A failed config refresh clears the cached friend
+enable flag and notifies React surfaces. Invitation generation refreshes config
+and authorized state before its request. Copy/share rechecks current availability
+and account before using an existing invite. State and reward reads remain
+available when config is unavailable or the owner disables friend referrals.
+
+`ReferralState.friendReferralsEnabled` is the effective server flag.
+`hasReferralHistory` preserves accepted invitees even with no reward or inviter
+counts; older responses fall back to earned rewards or nonzero progress.
+`useFriendReferrals` exposes `canViewReferrals` (enabled or history). The panel
+hides after loading only when both are false.
+`ReferralProgram.canEnroll` and optional `enrollmentIneligibilityReason` describe
+eligibility for the current invitee. Invitee age eligibility does not restrict
+existing users from inviting others. Stable reason codes are
+`friend_referrals_disabled`, `referral_account_age_unverified`,
+`referral_account_age_exceeded`, and `referral_existing_account_ineligible`; server
+enrollment rejections preserve them in `GrowthCatError.code`.
+
+`newUserMaxAgeDays` defaults to 7 when omitted. This grace window can admit an
+account created before the invitation, provided the server verifies its age.
+Explicit `null` uses the legacy invitation/program cutoff, rather than allowing
+unlimited account age. `friendRewardOncePerUser` defaults to true; the server
+atomically restricts the welcome benefit across programs for an app, workspace,
+and user when enabled. Never infer these decisions from browser dates, device
+identifiers, or local storage.
+
+Direct `enrollReferral` and friend `applyReferralCode` calls reach the backend even
+when the UI gate is closed. The backend distinguishes accepted idempotent retries
+from fresh admission so disabling referrals or passing the age cutoff preserves
+accepted participants and history. Handle its rejection for a fresh enrollment;
+the SDK does not locally grant eligibility or benefits.
 
 ## Rewards and limits
 

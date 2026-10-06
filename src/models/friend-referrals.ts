@@ -14,7 +14,11 @@ export interface ReferralMilestone { id: string; requiredCount: number; label?: 
 export interface ReferralProgram extends ReferralAvailability {
   id: string; version: number; name: string; campaignKey: string; status: string;
   qualifyingEvent: string; friendTriggerEvent: string; requiredCount: number;
-  frequency: string; existingUsersAllowed: boolean; inviterReward: ReferralRewardSpec;
+  frequency: string; existingUsersAllowed: boolean;
+  /** Server eligibility for the current invitee; never inferred from local account age. */
+  canEnroll: boolean; enrollmentIneligibilityReason?: string;
+  /** Null uses the legacy invitation/program cutoff, rather than unlimited age. */
+  newUserMaxAgeDays: number | null; friendRewardOncePerUser: boolean; inviterReward: ReferralRewardSpec;
   friendReward: ReferralRewardSpec; inviterMilestones: ReferralMilestone[];
 }
 export interface ReferralMilestoneProgress extends ReferralMilestone {
@@ -33,7 +37,7 @@ export interface ReferralReward {
   expiresAt?: string; redemptionStatus?: string; refundFlagged: boolean; simulated: boolean;
   customPayload?: Record<string, unknown>;
 }
-export interface ReferralState { appUserId: string; programs: ReferralProgram[]; progress: ReferralProgress[]; rewards: ReferralReward[]; }
+export interface ReferralState { hasReferralHistory: boolean; friendReferralsEnabled: boolean; appUserId: string; programs: ReferralProgram[]; progress: ReferralProgress[]; rewards: ReferralReward[]; }
 export interface ReferralInvite extends ReferralAvailability { code: string; token: string; programId: string; url: string; }
 export interface ReferralEnrollment { id: string; programId: string; eligibilityVerified: boolean; qualifiedAt?: string; }
 export interface ReferralEnrollmentResult { enrollment: ReferralEnrollment; state: ReferralState; }
@@ -73,11 +77,15 @@ export function parseReferralProgram(raw: Raw): ReferralProgram {
     campaignKey: required(raw, "campaign_key"), status: required(raw, "status"), ...parseReferralAvailability(raw),
     qualifyingEvent: required(raw, "qualifying_event"), friendTriggerEvent: required(raw, "friend_trigger_event"),
     requiredCount: number(raw.required_count), frequency: required(raw, "frequency"),
-    existingUsersAllowed: raw.existing_users_allowed === true, inviterReward: rewardSpec(raw.inviter_reward),
+    existingUsersAllowed: raw.existing_users_allowed === true, canEnroll: raw.can_enroll === true,
+    enrollmentIneligibilityReason: text(raw.enrollment_ineligibility_reason),
+    newUserMaxAgeDays: raw.new_user_max_age_days === null ? null :
+      typeof raw.new_user_max_age_days === "number" && Number.isInteger(raw.new_user_max_age_days) && raw.new_user_max_age_days >= 1 && raw.new_user_max_age_days <= 3650 ? raw.new_user_max_age_days : 7,
+    friendRewardOncePerUser: raw.friend_reward_once_per_user !== false, inviterReward: rewardSpec(raw.inviter_reward),
     friendReward: rewardSpec(raw.friend_reward), inviterMilestones: rows(raw.inviter_milestones).map(milestone) };
 }
 export function parseReferralState(raw: Raw): ReferralState {
-  return { appUserId: required(raw, "app_user_id"), programs: rows(raw.programs).map(parseReferralProgram),
+  const state: ReferralState = { hasReferralHistory: raw.has_referral_history === true, friendReferralsEnabled: raw.friend_referrals_enabled === true, appUserId: required(raw, "app_user_id"), programs: rows(raw.programs).map(parseReferralProgram),
     progress: rows(raw.progress).map(p => ({ programId: required(p, "program_id"), campaignKey: required(p, "campaign_key"),
       enrolledCount: number(p.enrolled_count), qualifiedCount: number(p.qualified_count), requiredCount: number(p.required_count),
       earnedRewards: number(p.earned_rewards), nextThreshold: p.next_threshold == null ? null : number(p.next_threshold),
@@ -92,6 +100,15 @@ export function parseReferralState(raw: Raw): ReferralState {
       offerCodeRedemptionUrl: httpsUrl(r.offer_code_redemption_url), expiresAt: typeof r.expires_at === "string" ? r.expires_at : undefined,
       redemptionStatus: text(r.redemption_status), refundFlagged: r.refund_flagged === true, simulated: r.simulated === true,
       customPayload: r.custom_payload ? referralObject(r.custom_payload) : undefined })) };
+  state.hasReferralHistory = referralStateHasHistory(state);
+  return state;
+}
+
+/** Older responses omit the accepted-invitee signal; meaningful progress/rewards remain history. */
+export function referralStateHasHistory(state: Pick<ReferralState, "progress" | "rewards"> & { hasReferralHistory?: boolean }): boolean {
+  return state.hasReferralHistory === true || state.rewards.length > 0 || state.progress.some(progress =>
+    progress.enrolledCount > 0 || progress.qualifiedCount > 0 || progress.earnedRewards > 0 ||
+    progress.milestones.some(milestone => milestone.earned));
 }
 function httpsUrl(value: unknown): string | undefined { const url = webUrl(value); return url?.startsWith("https://") ? url : undefined; }
 export function parseReferralInvite(raw: Raw): ReferralInvite {

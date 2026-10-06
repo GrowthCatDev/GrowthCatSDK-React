@@ -1002,6 +1002,7 @@ const client = GrowthCat.shared;
 // Referral flags
 if (client.sdkConfig?.showCodeRedeemUI) showRedeemButton();
 if (client.sdkConfig?.allowCodeRedeemExecution) allowUserToStart();
+if (client.sdkConfig?.friendReferralsEnabled) showFriendReferralEntry();
 
 // Ads flag
 if (client.adsConfig?.adsEnabled) prefetchAds();
@@ -1009,6 +1010,12 @@ if (client.adsConfig?.adsEnabled) prefetchAds();
 // Manually refresh (e.g., after sign-in or page focus).
 const config = await GrowthCat.shared.refreshSDKConfig();
 ```
+
+Friend referrals require an explicit `friend_referrals_enabled: true` from the
+server. Missing or unavailable config disables new friend entry and sharing.
+Use `state.friendReferralsEnabled` and `program.canEnroll` for current invitee
+eligibility; read progress and earned rewards regardless of these flags.
+Influencer code settings remain independent.
 
 ---
 
